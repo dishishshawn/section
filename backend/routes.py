@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List
 import uuid
+import os
 from database import get_db
 from models import Project, Document, Tract, Party, Instrument, Interest, Obligation
 from pydantic import BaseModel
+from exports import OwnershipReportGenerator
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -124,6 +127,39 @@ def get_obligations(project_id: int, db: Session = Depends(get_db)):
             for o in obligations
         ]
     }
+
+@router.get("/projects/{project_id}/export/ownership")
+def export_ownership_report(project_id: int, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    interests = db.query(Interest).join(Tract).filter(Tract.project_id == project_id).all()
+
+    ownership_data = {
+        "project_id": project_id,
+        "owners": [
+            {
+                "name": i.party.name if i.party else "Unknown",
+                "fraction": f"{i.fraction_numerator}/{i.fraction_denominator}",
+                "percentage": round((i.fraction_numerator / i.fraction_denominator) * 100, 2),
+                "mineral_estate": i.mineral_estate,
+                "burdens": i.burdens if i.burdens else "None",
+            }
+            for i in interests
+        ],
+        "total_acres": 640,
+        "leased_acres": 480,
+        "open_acres": 160,
+    }
+
+    pdf_buffer = OwnershipReportGenerator.generate_pdf(project.name, project.jurisdiction, ownership_data)
+
+    return FileResponse(
+        iter(pdf_buffer),
+        media_type="application/pdf",
+        filename=f"{project.name}_Ownership_Report.pdf"
+    )
 
 @router.post("/health")
 def health():

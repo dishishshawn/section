@@ -5,6 +5,7 @@ import Runsheet from "./Runsheet";
 import OwnershipView from "./OwnershipView";
 import ObligationCalendar from "./ObligationCalendar";
 import RiskDashboard from "./RiskDashboard";
+import ExportButton from "./ExportButton";
 
 type ViewType = "runsheet" | "ownership" | "calendar" | "risk";
 
@@ -32,22 +33,25 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction }: 
         <p className="text-slate-400">{jurisdiction} • Project ID: {projectId}</p>
       </header>
 
-      {/* View Switcher */}
+      {/* View Switcher & Actions */}
       <div className="bg-slate-100 border-b border-slate-300 p-4">
-        <div className="flex gap-4 flex-wrap">
-          {views.map((view) => (
-            <button
-              key={view.id}
-              onClick={() => setCurrentView(view.id)}
-              className={`px-4 py-2 rounded font-semibold transition-colors ${
-                currentView === view.id
-                  ? "bg-blue-600 text-white"
-                  : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
-              }`}
-            >
-              {view.label}
-            </button>
-          ))}
+        <div className="flex gap-4 flex-wrap items-center justify-between">
+          <div className="flex gap-4 flex-wrap">
+            {views.map((view) => (
+              <button
+                key={view.id}
+                onClick={() => setCurrentView(view.id)}
+                className={`px-4 py-2 rounded font-semibold transition-colors ${
+                  currentView === view.id
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                {view.label}
+              </button>
+            ))}
+          </div>
+          <ExportButton projectId={projectId} projectName={projectName} />
         </div>
       </div>
 
