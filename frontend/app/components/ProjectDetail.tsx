@@ -1,0 +1,63 @@
+"use client";
+
+import { useState } from "react";
+import Runsheet from "./Runsheet";
+import OwnershipView from "./OwnershipView";
+import ObligationCalendar from "./ObligationCalendar";
+import RiskDashboard from "./RiskDashboard";
+
+type ViewType = "runsheet" | "ownership" | "calendar" | "risk";
+
+interface ProjectDetailProps {
+  projectId: number;
+  projectName: string;
+  jurisdiction: string;
+}
+
+export default function ProjectDetail({ projectId, projectName, jurisdiction }: ProjectDetailProps) {
+  const [currentView, setCurrentView] = useState<ViewType>("runsheet");
+
+  const views: { id: ViewType; label: string }[] = [
+    { id: "runsheet", label: "Runsheet" },
+    { id: "ownership", label: "Ownership" },
+    { id: "calendar", label: "Obligations" },
+    { id: "risk", label: "Risk Dashboard" },
+  ];
+
+  return (
+    <div className="min-h-screen bg-white">
+      {/* Header */}
+      <header className="bg-slate-900 text-white p-6 border-b border-slate-700">
+        <h1 className="text-2xl font-bold">{projectName}</h1>
+        <p className="text-slate-400">{jurisdiction} • Project ID: {projectId}</p>
+      </header>
+
+      {/* View Switcher */}
+      <div className="bg-slate-100 border-b border-slate-300 p-4">
+        <div className="flex gap-4 flex-wrap">
+          {views.map((view) => (
+            <button
+              key={view.id}
+              onClick={() => setCurrentView(view.id)}
+              className={`px-4 py-2 rounded font-semibold transition-colors ${
+                currentView === view.id
+                  ? "bg-blue-600 text-white"
+                  : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+              }`}
+            >
+              {view.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="max-w-6xl mx-auto">
+        {currentView === "runsheet" && <Runsheet projectId={projectId} />}
+        {currentView === "ownership" && <OwnershipView projectId={projectId} />}
+        {currentView === "calendar" && <ObligationCalendar projectId={projectId} />}
+        {currentView === "risk" && <RiskDashboard projectId={projectId} />}
+      </div>
+    </div>
+  );
+}

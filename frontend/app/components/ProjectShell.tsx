@@ -16,6 +16,7 @@ export default function ProjectShell() {
   const [error, setError] = useState<string | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectJurisdiction, setNewProjectJurisdiction] = useState("Oklahoma");
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -50,6 +51,14 @@ export default function ProjectShell() {
       setError(err.message || "Failed to create project");
     }
   };
+
+  if (selectedProjectId !== null) {
+    const selected = projects.find((p) => p.id === selectedProjectId);
+    if (selected) {
+      const ProjectDetail = require("./ProjectDetail").default;
+      return <ProjectDetail projectId={selected.id} projectName={selected.name} jurisdiction={selected.jurisdiction} />;
+    }
+  }
 
   return (
     <div className="min-h-screen bg-white">
@@ -100,7 +109,11 @@ export default function ProjectShell() {
             ) : (
               <div className="grid gap-4">
                 {projects.map((project) => (
-                  <div key={project.id} className="p-4 border border-slate-200 rounded-lg hover:bg-slate-50">
+                  <div
+                    key={project.id}
+                    onClick={() => setSelectedProjectId(project.id)}
+                    className="p-4 border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer"
+                  >
                     <h3 className="font-bold text-lg">{project.name}</h3>
                     <p className="text-sm text-slate-600">{project.jurisdiction}</p>
                     <p className="text-xs text-slate-400">Created: {new Date(project.created_at).toLocaleDateString()}</p>
