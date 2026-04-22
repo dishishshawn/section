@@ -165,7 +165,7 @@ def seed_demo_project():
     db.add(obl3)
 
     db.commit()
-    print(f"✓ Demo project created: {project.name}")
+    print(f"[SUCCESS] Demo project created: {project.name}")
     print(f"  - Project ID: {project_id}")
     print(f"  - Tract: {tract.legal_description}")
     print(f"  - Parties: {len(parties)}")
