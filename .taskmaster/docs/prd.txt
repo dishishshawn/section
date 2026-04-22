@@ -1,0 +1,228 @@
+# Section - Product Requirements Document
+
+## Overview
+
+Section is an AI-native operating layer for land services firms. It ingests the documents behind every oil & gas land deal (deeds, leases, probates, assignments, affidavits, court orders) and turns them into a structured, queryable model of ownership, obligations, and risk called the Land Graph. Every landman deliverable - ownership reports, runsheets, leasehold confirmations, curative packages, A&D memos - is produced as a view or export from that single graph.
+
+**Problem solved:** Land services firms re-do the same document-parsing, chain-of-title, and fractional-ownership work project-by-project. Knowledge evaporates into shared drives between engagements. Legacy land software (iLandMan, Quorum, PakEnergy) digitizes outputs but not process. AI-native entrants (Oseberg, ThoughtTrace, Collide) each cover narrow slices. No one has built the project-centric operating layer firms actually work inside.
+
+**Primary user:** Landman at a land services firm (design partner: Compass). Secondary: in-house land teams at mid-size operators (50-5,000 wells) running active leasing or acquisition programs.
+
+**Value:**
+- 3-5x project throughput without hiring; two-week deliverables collapse to three days.
+- Senior time shifts from document-chasing to judgment calls.
+- Productized subscription revenue for services firms reselling Section to their E&P clients.
+- Knowledge compounds across deals instead of evaporating at project close.
+
+## Core Features
+
+### 1. Project Shell
+Every unit of work is a project (e.g. "Garfield County 640-acre Tract - STACK Area"). Documents, extracted facts, generated views, exports, and team collaboration live inside the project. Provides sidebar navigation, view switcher, project header with key stats (doc count, tract acres, owners, flagged issues).
+
+**Why it matters:** Project scoping mirrors how land firms bill, staff, and deliver. It is the unit that keeps knowledge contained and contextual.
+
+### 2. Document Ingestion Pipeline
+Drag-drop upload (single and bulk). S3-backed storage. OCR for scanned records. Chunking and structured extraction against a typed schema using Claude. Every extracted fact carries provenance: link to source document, page, and exact excerpt.
+
+**How it works:** Upload -> OCR (if needed) -> chunk -> route to extractor (lease, deed, probate, assignment) -> validate against schema -> write facts + provenance into Land Graph.
+
+### 3. Land Graph (core data model)
+Typed relational graph in Postgres representing the land position:
+- **Tracts** - surface and mineral acreage in scope.
+- **Instruments** - deeds, leases, assignments, probates, affidavits, court orders.
+- **Parties** - individuals, estates, entities holding interests.
+- **Interests** - fractional ownership of a mineral estate, burdened by specific obligations.
+- **Obligations** - primary term expirations, Pugh triggers, shut-in clocks, continuous drilling deadlines, rental payments.
+
+Corrections at the instrument level cascade to every derived view. pgvector for semantic search across document text.
+
+### 4. Lease Extractor
+Structured schema extraction: lessor, lessee, legal description, gross/net acres, royalty, primary term, bonus, Pugh clauses, depth limits, shut-in, continuous drilling. Runs against Claude with versioned prompts. Backed by an evaluation harness comparing output against hand-labeled truth on a gold set of 15-25 redacted Oklahoma leases.
+
+### 5. Deed Extractor
+Structured schema: grantor, grantee, legal description, interest conveyed, reservations, date, recording info. Same eval-harness discipline as lease extractor.
+
+### 6. Runsheet View
+Auto-built chain of title from ingested instruments. Gaps and breaks flagged in red. Curative needs surfaced with the specific missing instrument named (e.g. "no deed from John Smith estate to heirs - need affidavit of heirship").
+
+### 7. Ownership View
+Fractional mineral and leasehold ownership computed across the full conveyance chain. Includes waterfall visualization, final-owner pie chart, leased-vs-open overlay, net-acre rollups, and burden stacks (royalties + ORRIs).
+
+### 8. Obligation Calendar
+Every lease's primary term, Pugh trigger, shut-in clock, continuous drilling requirement, and rental payment rendered on a month/quarter calendar. Configurable threshold alerts (e.g. 90/60/30 days before expiration).
+
+### 9. A&D / Risk Dashboard
+Portfolio-level view across all leases in the project: expiration distribution, royalty ranges, flagged issues requiring senior review, risk heat map. Compresses a two-week diligence into an afternoon of senior review.
+
+### 10. Exports
+One-click generation of ownership reports, runsheets, and leasehold confirmations in the customer's own template (starting with Compass). Every field auto-populated from the Land Graph. PDF output.
+
+### 11. Document Detail View
+Split view: extracted structured abstract on one side, source PDF with linked highlights on the other. Clicking a fact jumps to its provenance highlight in the source.
+
+## User Experience
+
+### User Personas
+
+**Primary - Services-firm Landman (Compass).** Runs 2-6 week title/leasing/A&D projects. Today lives in Word, Excel, and shared drives. Senior landmen spend most of their time reading documents and computing fractions. Junior landmen do runsheet grunt work. Both persona tiers benefit: juniors get leverage, seniors get a review surface.
+
+**Secondary - In-house Land Lead at mid-size Operator.** 50-5,000 wells. Runs active leasing or acquisition programs. Too sophisticated for spreadsheets, too small for Enverus. Buys Section directly or via a "Compass-enabled" resold tier.
+
+### Key User Flows
+
+1. **Start a project:** Create project -> name it, set jurisdiction (Oklahoma first) -> land in empty project shell.
+2. **Ingest a data room:** Drag-drop 30-40 documents -> watch extraction stream progress -> land in populated Runsheet with red-flag gaps highlighted.
+3. **Trace title:** Open Runsheet -> click a flagged gap -> see the specific curative need called out -> click into source instrument for context.
+4. **Compute ownership:** Switch to Ownership view -> see waterfall and final pie -> drill into any owner to see their full conveyance path.
+5. **Review risk:** Switch to A&D dashboard -> scan flagged leases -> click through to specific provisions needing senior review.
+6. **Ship the deliverable:** Click "Generate Ownership Report" -> PDF renders in Compass template -> download or send to client.
+
+### UI/UX Considerations
+
+- Project-shell chrome consistent across views (sidebar, header, view switcher).
+- Every surfaced fact in a derived view links back to its source document + excerpt (provenance first-class in UI).
+- Red-flag and risk affordances are visible and scannable; the dashboard must read in seconds.
+- Exports look like the customer wrote them, not like another SaaS PDF. Template-first design.
+- No live-Wi-Fi dependence for demos: local fallbacks for every view.
+
+## Technical Architecture
+
+### System Components
+- **Frontend:** Next.js + Tailwind. SSR for project shell and document views. Client-side for interactive calculators and calendars.
+- **Backend:** Python FastAPI. REST endpoints for projects, documents, graph queries, exports. Async workers for ingestion.
+- **Database:** Postgres for the Land Graph (tracts, instruments, parties, interests, obligations) + pgvector for document semantic search.
+- **Object storage:** S3 (or local MinIO in dev) for source documents and generated PDFs.
+- **LLM:** Claude (Anthropic API) as primary extraction and reasoning model. Versioned, testable prompt-management pattern.
+- **OCR:** pluggable (e.g. Textract or Tesseract) for scanned records.
+
+### Data Models
+- **Project** (id, name, jurisdiction, created_at, owner_org).
+- **Document** (id, project_id, s3_key, mime, page_count, ocr_status, extraction_status).
+- **Tract** (id, project_id, legal_description, gross_acres).
+- **Party** (id, project_id, name, type=individual|estate|entity).
+- **Instrument** (id, project_id, type=deed|lease|assignment|probate|affidavit|order, recorded_at, source_document_id).
+- **Interest** (id, tract_id, party_id, fraction_numerator, fraction_denominator, mineral_estate, burdens[]).
+- **Obligation** (id, instrument_id, type=primary_term|pugh|shut_in|continuous_drilling|rental, due_date, params_json).
+- **Fact** (provenance join) (id, subject_type, subject_id, document_id, page, excerpt, extractor_version).
+
+### APIs and Integrations
+- Internal REST API: projects, documents, graph, exports.
+- Claude API for extraction.
+- S3-compatible storage.
+- PDF generation (WeasyPrint or similar) for templated exports.
+
+### Infrastructure
+- Cloud deployment target TBD (Render/Fly/AWS). Dev runs locally via docker-compose.
+- CI runs extraction eval harness on every PR touching prompts.
+
+### Open Technical Questions
+- Is pgvector sufficient long-term, or do we need a dedicated vector DB? (Decision gate before scale.)
+- Graph schema pressure-test: sufficiency for Texas and New Mexico once Oklahoma is proven.
+- Extraction eval harness: metrics, gold-set growth process, acceptable thresholds per field.
+
+## Development Roadmap
+
+### Phase A - Foundation (MVP scaffolding)
+- Next.js + FastAPI + Postgres + S3 project skeleton; deploy target stood up.
+- v0 Land Graph schema with migrations (tracts, parties, instruments, interests, obligations - minimally sufficient).
+- Project creation UI and document-upload drag-drop zone with storage and a basic document list.
+- Claude API integration with versioned, testable prompt-management pattern.
+
+### Phase B - Extraction (the core value engine)
+- Gold set assembly: 15-25 redacted Oklahoma sample documents from Compass. Hand-labeled truth.
+- Lease extractor against full schema; eval harness comparing output to truth.
+- Deed extractor against full schema; eval harness.
+- Facts pipeline writing extractor output into the Land Graph with full provenance.
+
+### Phase C - Views (what the user sees)
+- Project shell UI: sidebar, view switcher, project header with key stats.
+- Document view: list + detail pane with extracted abstract next to source PDF, linked highlights.
+- Ownership calculator: fractional math across a chain of 5-10 conveyances; waterfall + final pie visualizations.
+- Obligation calendar: dated obligations on month/quarter calendar with threshold alerts.
+- A&D / risk dashboard: portfolio stats, flagged issues list.
+
+### Phase D - Outputs (the billable artifact)
+- Ownership report PDF generator using Compass's actual template. Runsheet export. Leasehold confirmation export.
+
+### Phase E - Seed & polish (demo-grade)
+- Build the fictional demo project: "Garfield County 640-acre Tract - STACK Area" with 30-40 seeded documents telling a coherent story, including 1-2 title defects and 1-2 at-risk leases.
+- 5-7 minute demo script with clean narrative arc.
+- Pre-rendered fallback for every view; local copy of everything.
+
+### Phase F - Dry run
+- Full dress rehearsal with a skeptical-landman stand-in. Tighten script based on where it drags.
+
+### Future Enhancements (post-demo)
+- Probate and assignment extractors beyond deed/lease.
+- Texas jurisdiction support (extractors + templates).
+- New Mexico jurisdiction support.
+- Multi-user collaboration within a project (comments, review queues, assignment of curative tasks).
+- Additional deliverable templates (runsheet, leasehold confirmation, curative package, A&D memo).
+- Courthouse data source integrations (Oseberg, TexasFile, Courthouse Direct).
+- Operator ERP integrations (PakEnergy, Quorum) for write-out.
+- Tenant/org model and billing for SaaS GTM.
+- SSO, audit log, and permissioning for enterprise operator customers.
+
+## Logical Dependency Chain
+
+Build order is chosen so that every phase produces something visible and usable, and later phases build only on foundations already laid.
+
+1. **Foundation first.** Frontend, backend, DB, storage, LLM wiring. Nothing visible yet, but without this nothing else ships.
+2. **Graph schema before extraction.** Extractors need a target. Schema must exist first.
+3. **Document upload before extraction.** Extractors need inputs. Upload + storage must exist first.
+4. **Extraction before views.** Every view reads from the graph. Graph must be populated by real extraction before any view is meaningful.
+5. **Lease + deed extractors first** (not probate/assignment). These two cover the majority of documents in the Oklahoma gold set and unblock ownership math.
+6. **Facts pipeline + provenance** before any view is built. Views without provenance links are a regression.
+7. **Project shell + document view** are the first visible surfaces. They ship as soon as extraction writes into the graph.
+8. **Ownership view** ships next - it is the highest-signal view for the demo and validates the graph end-to-end.
+9. **Runsheet** (chain-of-title + curative flags) ships after ownership, once graph traversal is proven.
+10. **Obligation calendar** ships once dated obligations exist in the graph from the lease extractor.
+11. **A&D / risk dashboard** ships last among views - it aggregates everything prior.
+12. **Exports** come after views because they read from the same graph and reuse the same computations.
+13. **Seed project, demo script, fallbacks, dry run** are the final polish layer and cannot start until everything above is behaving.
+
+Each phase leaves behind a usable increment: after Phase A you can upload a document; after Phase B you can see structured facts; after Phase C you can navigate a real project; after Phase D you can ship a deliverable PDF; after Phase E/F you can run the demo cold.
+
+## Risks and Mitigations
+
+### Technical Risks
+- **Extraction accuracy below the bar landmen trust.** Mitigation: eval harness from day one, hand-labeled gold set, versioned prompts, per-field accuracy targets, provenance surfaced in UI so reviewers can verify fast.
+- **Graph schema does not generalize beyond Oklahoma.** Mitigation: schema review with a senior landman before Phase B; keep extractor logic and templates jurisdiction-specific so core graph stays clean.
+- **pgvector insufficient at scale.** Mitigation: semantic search isolated behind a retrieval service interface so a swap to a dedicated vector DB is a contained change.
+- **OCR quality on old scanned instruments.** Mitigation: pluggable OCR layer; allow manual upload of pre-OCR'd text; escalate low-confidence pages to human review rather than silently extracting garbage.
+
+### MVP / Scope Risks
+- **Demo scope creep.** Mitigation: lock demo scope before Phase A code is written. Anything not on the Garfield County demo script is post-demo.
+- **Missing sample documents.** Mitigation: get 15-25 redacted Oklahoma sample documents from Compass before writing extractor code. No samples = no extractors = no product.
+- **Live-ingest failure during demo.** Mitigation: pre-rendered fallbacks for every view; local copy of all assets; no Wi-Fi dependence.
+
+### Resource Risks
+- **Small team, broad surface.** Mitigation: strict phase gating; no Phase C work before Phase B extractors hit their eval thresholds; no Phase D exports before Phase C views are reading correctly.
+- **Competitive pressure from narrow-slice AI entrants.** Mitigation: the project-centric operating layer is the moat; ship the integrated demo before point tools can expand.
+
+## Appendix
+
+### Research Findings
+- Legacy land software (iLandMan, Quorum, PakEnergy) digitizes the output (a database of leases) but does not touch the process of turning paper into structure.
+- AI-native entrants (Oseberg, ThoughtTrace, Collide) own narrow slices (courthouse data, lease extraction, post-acquisition docs) but no project-centric operating layer exists.
+- Convergent timing: methane regulations, M&A wave, retiring landman workforce, and the maturing of Claude-class LLMs.
+
+### What Section Is Not
+- Not a courthouse records database (that is Oseberg, TexasFile, Courthouse Direct).
+- Not a general-purpose CLM platform (that is Icertis, Agiloft).
+- Not an E&P land ERP replacement (that is PakEnergy, Quorum). Section sits above those - ingesting from them, producing for them.
+
+### Go-to-Market Anchor
+Design-partner launch with Compass: their team uses Section on real projects, produces case-study data, and opens doors to their E&P clients. Section sells to those E&P clients as either a direct subscription or a "Compass-enabled" premium service tier the firm resells.
+
+### Jurisdiction Sequence
+Oklahoma first. Texas next. New Mexico third. The graph is jurisdiction-agnostic; only extractors and templates vary.
+
+### Technical Specifications (summary)
+- Frontend: Next.js, Tailwind.
+- Backend: Python, FastAPI.
+- Database: Postgres with pgvector.
+- Storage: S3.
+- LLM: Claude (Anthropic).
+- Ingestion: OCR -> chunk -> structured extraction -> Land Graph with provenance.
+- Eval: harness comparing extractor output to hand-labeled truth on a gold set; runs in CI on prompt changes.
