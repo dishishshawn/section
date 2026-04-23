@@ -44,82 +44,98 @@ export default function OwnershipView({ projectId }: { projectId: number }) {
 
   if (loading) {
     return (
-      <div className="px-8 py-10 text-sm text-ink-3">
+      <div className="px-10 py-12 text-sm text-ink-3">
         <span className="inline-block w-3 h-3 border-2 border-ink-3/30 border-t-ink rounded-full animate-spin mr-2 align-middle" />
-        Loading ownership data…
+        <span className="font-serif-italic">Loading ownership…</span>
       </div>
     );
   }
-  if (error) return <div className="px-8 py-10 text-sm text-danger">{error}</div>;
+  if (error) return <div className="px-10 py-12 text-sm text-danger font-serif-italic">{error}</div>;
 
   const isEmpty = !data?.owners?.length;
 
   return (
-    <div className="px-8 py-10">
+    <div className="px-10 py-12">
       <div className="mb-8">
-        <div className="font-mono text-xs uppercase tracking-[0.18em] text-ink-3 mb-1.5">
-          03 — Ownership
-        </div>
-        <h2 className="font-display text-3xl font-semibold text-ink">Ownership position</h2>
+        <div className="eyebrow mb-2">Section III</div>
+        <h2 className="font-display text-[2.4rem] font-medium leading-none text-ink tracking-tight">
+          Ownership position
+        </h2>
+        <p className="mt-3 font-serif-italic text-ink-2 text-[1.02rem] max-w-2xl">
+          Fractional mineral interests, with the instrument that established each.
+        </p>
       </div>
 
       {isEmpty ? (
-        <div className="rounded-xl border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-          <div className="font-display text-lg text-ink mb-1">No ownership data yet</div>
-          <p className="text-sm text-ink-3 max-w-md mx-auto">
+        <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
+          <div className="font-display text-xl text-ink mb-1">No ownership of record</div>
+          <p className="text-sm text-ink-3 font-serif-italic max-w-md mx-auto">
             Upload deeds in the Documents tab to establish fractional ownership.
           </p>
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-px bg-line rounded-xl overflow-hidden border border-line mb-10">
-            <Stat label="Total acres" value={data!.total_acres} suffix="ac" />
-            <Stat label="Leased" value={data!.leased_acres} suffix="ac" tone="positive" />
-            <Stat label="Open" value={data!.open_acres} suffix="ac" tone="warn" />
+          {/* Acreage summary — styled like an abstract cover sheet */}
+          <div className="grid grid-cols-3 border-y-[2.5px] border-rule divide-x divide-line-strong mb-10">
+            <Stat label="Total acres" value={data!.total_acres} />
+            <Stat label="Under lease" value={data!.leased_acres} tone="positive" />
+            <Stat label="Open" value={data!.open_acres} tone="warn" />
           </div>
 
-          <div className="flex items-baseline justify-between mb-4">
-            <h3 className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-3">
+          {/* Owner register */}
+          <div className="flex items-baseline justify-between mb-4 pb-3 rule-hairline">
+            <h3 className="font-display text-xl font-medium text-ink">
               Fractional ownership
             </h3>
-            <span className="text-xs text-ink-3 tabular">{data!.owners.length} parties</span>
+            <span className="text-sm font-serif-italic text-ink-3 tabular">
+              {data!.owners.length} part{data!.owners.length === 1 ? "y" : "ies"}
+            </span>
           </div>
-          <div className="space-y-2">
+
+          <ul className="divide-y divide-line">
             {data!.owners.map((owner, idx) => (
-              <div
-                key={idx}
-                className="rounded-xl border border-line bg-surface px-4 py-4 hover:border-line-strong transition-colors"
-              >
-                <div className="flex items-center justify-between mb-2.5 gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="flex-shrink-0 w-7 h-7 rounded-md bg-accent-tint text-accent-strong font-mono text-xs font-semibold flex items-center justify-center tabular">
-                      {String(idx + 1).padStart(2, "0")}
-                    </span>
-                    <span className="font-display font-semibold text-ink truncate">
+              <li key={idx} className="py-5">
+                <div className="grid grid-cols-[2rem_minmax(0,1fr)_auto] gap-5 items-baseline mb-2">
+                  {/* Roman-ish small numeral */}
+                  <div className="text-right font-serif-italic text-ink-3 text-[0.9rem] tabular">
+                    {idx + 1}.
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-display text-[1.2rem] font-medium text-ink leading-tight truncate">
                       {owner.name}
-                    </span>
+                    </div>
                   </div>
-                  <span className="font-mono text-sm tabular text-ink font-semibold shrink-0">
-                    {owner.percentage}%
-                  </span>
-                </div>
-                <div className="relative w-full h-1.5 bg-line/60 rounded-full overflow-hidden">
-                  <div
-                    className="absolute inset-y-0 left-0 bg-accent rounded-full transition-all"
-                    style={{ width: `${Math.min(owner.percentage, 100)}%` }}
-                  />
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-xs text-ink-3 font-mono tabular min-w-0">
-                    <span>{owner.fraction}</span>
-                    <span className="text-line-strong">·</span>
-                    <span className="truncate">{owner.mineral_estate}</span>
+                  <div className="text-right">
+                    <div className="font-display text-[1.35rem] text-ink tabular leading-none">
+                      {owner.percentage}%
+                    </div>
                   </div>
-                  <SourceBadge source={owner.source} />
                 </div>
-              </div>
+
+                <div className="grid grid-cols-[2rem_minmax(0,1fr)_auto] gap-5">
+                  <div />
+                  <div>
+                    {/* Ownership bar — thin pen-drawn feel */}
+                    <div className="relative w-full h-[6px] bg-line/70 mb-2 overflow-hidden rounded-[1px]">
+                      <div
+                        className="absolute inset-y-0 left-0 bg-accent rounded-[1px] transition-all"
+                        style={{ width: `${Math.min(owner.percentage, 100)}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="text-sm text-ink-3 flex items-center gap-2.5">
+                        <span className="tabular font-medium text-ink-2">{owner.fraction}</span>
+                        <span className="text-line-strong">·</span>
+                        <span className="font-serif-italic">{owner.mineral_estate}</span>
+                      </div>
+                      <SourceBadge source={owner.source} />
+                    </div>
+                  </div>
+                  <div />
+                </div>
+              </li>
             ))}
-          </div>
+          </ul>
         </>
       )}
     </div>
@@ -129,24 +145,20 @@ export default function OwnershipView({ projectId }: { projectId: number }) {
 function Stat({
   label,
   value,
-  suffix,
   tone = "neutral",
 }: {
   label: string;
   value: number;
-  suffix?: string;
   tone?: "neutral" | "positive" | "warn";
 }) {
   const valueColor =
     tone === "positive" ? "text-positive" : tone === "warn" ? "text-warn" : "text-ink";
   return (
-    <div className="bg-surface px-5 py-5">
-      <div className="text-[0.7rem] font-mono uppercase tracking-[0.16em] text-ink-3 mb-2">
-        {label}
-      </div>
-      <div className={`font-display text-3xl font-semibold tabular ${valueColor}`}>
+    <div className="bg-paper px-6 py-6">
+      <div className="eyebrow mb-2">{label}</div>
+      <div className={`font-display text-[2.4rem] font-medium leading-none tabular ${valueColor}`}>
         {value}
-        {suffix && <span className="text-base text-ink-3 font-normal ml-1">{suffix}</span>}
+        <span className="text-sm font-serif-italic text-ink-3 font-normal ml-1.5">ac</span>
       </div>
     </div>
   );

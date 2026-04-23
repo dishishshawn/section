@@ -28,9 +28,9 @@ interface RunsheetData {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 const STATUS = {
-  complete: { dot: "bg-positive", label: "Complete", chip: "bg-positive-soft text-positive" },
-  flagged: { dot: "bg-warn", label: "Review", chip: "bg-warn-soft text-warn" },
-  missing: { dot: "bg-danger", label: "Missing", chip: "bg-danger-soft text-danger" },
+  complete: { label: "Of record", class: "text-positive", italics: true },
+  flagged: { label: "Review", class: "text-warn", italics: true },
+  missing: { label: "Incomplete", class: "text-rust", italics: true },
 } as const;
 
 export default function Runsheet({ projectId }: { projectId: number }) {
@@ -55,86 +55,98 @@ export default function Runsheet({ projectId }: { projectId: number }) {
 
   if (loading) {
     return (
-      <div className="px-8 py-10 text-sm text-ink-3">
+      <div className="px-10 py-12 text-sm text-ink-3">
         <span className="inline-block w-3 h-3 border-2 border-ink-3/30 border-t-ink rounded-full animate-spin mr-2 align-middle" />
-        Loading runsheet…
+        <span className="font-serif-italic">Loading runsheet…</span>
       </div>
     );
   }
-  if (error) return <div className="px-8 py-10 text-sm text-danger">{error}</div>;
+  if (error) return <div className="px-10 py-12 text-sm text-danger font-serif-italic">{error}</div>;
 
   const isEmpty = !data?.chain?.length;
 
   return (
-    <div className="px-8 py-10">
-      <div className="mb-8">
-        <div className="font-mono text-xs uppercase tracking-[0.18em] text-ink-3 mb-1.5">
-          02 — Runsheet
-        </div>
-        <h2 className="font-display text-3xl font-semibold text-ink">Chain of title</h2>
-      </div>
+    <div className="px-10 py-12">
+      <SectionHeading
+        eyebrow="Section II"
+        title="Chain of title"
+        subtitle="Every recorded instrument that touches this tract, in order of date."
+      />
 
       {isEmpty ? (
         <EmptyState
-          title="No instruments yet"
+          title="No instruments of record"
           body="Upload deeds, leases, or assignments in the Documents tab to build the chain of title."
         />
       ) : (
         <>
-          <ol className="relative space-y-3 mb-10">
-            <span className="absolute left-[19px] top-2 bottom-2 w-px bg-line" aria-hidden />
-            {data!.chain.map((item, idx) => {
-              const meta = STATUS[item.status];
-              return (
-                <li
-                  key={idx}
-                  className="relative pl-12 rounded-xl border border-line bg-surface px-4 py-4 hover:border-line-strong transition-colors"
-                >
-                  <span
-                    className={`absolute left-3 top-5 w-3.5 h-3.5 rounded-full ring-4 ring-paper ${meta.dot}`}
-                    aria-hidden
-                  />
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="font-display text-base font-semibold text-ink">
-                        {item.instrument_type}
+          {/* Table-style register — like a courthouse grantor/grantee index */}
+          <div className="border-t-[2.5px] border-rule">
+            <div className="border-t border-rule mt-[3px] mb-4" />
+            <ol>
+              {data!.chain.map((item, idx) => {
+                const meta = STATUS[item.status];
+                return (
+                  <li
+                    key={idx}
+                    className="grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 items-baseline py-5 border-b border-line last:border-b-0 group"
+                  >
+                    {/* Entry number */}
+                    <div className="text-right">
+                      <div className="font-display text-[1.1rem] text-ink-3 tabular leading-none">
+                        {String(idx + 1).padStart(2, "0")}
                       </div>
-                      <div className="mt-1 text-sm text-ink-2">
+                    </div>
+
+                    {/* Main record body */}
+                    <div className="min-w-0">
+                      <div className="flex items-baseline gap-3 flex-wrap mb-1">
+                        <span className="font-display text-[1.15rem] font-medium text-ink">
+                          {item.instrument_type}
+                        </span>
+                        <span className="tabular text-sm text-ink-3">{item.date}</span>
+                      </div>
+                      <div className="text-[0.98rem] text-ink-2 leading-snug">
                         <span className="font-medium">{item.grantor}</span>
-                        <span className="mx-2 text-ink-3">→</span>
+                        <span className="mx-2 text-accent">→</span>
                         <span className="font-medium">{item.grantee}</span>
                       </div>
-                      <div className="mt-1 text-xs font-mono tabular text-ink-3">{item.date}</div>
-                      <div className="mt-2">
+                      <div className="mt-2 flex items-center gap-4 flex-wrap">
                         <SourceBadge source={item.source} />
                       </div>
                     </div>
-                    <span className={`shrink-0 text-xs font-mono uppercase tracking-wider px-2 py-1 rounded-md ${meta.chip}`}>
-                      {meta.label}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
+
+                    {/* Status column */}
+                    <div className="text-right">
+                      <span className={`font-serif-italic text-sm ${meta.class}`}>
+                        {meta.label}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            <div className="border-b-[2.5px] border-rule mt-[3px]" />
+            <div className="border-b border-rule mt-[3px]" />
+          </div>
 
           {data!.gaps.length > 0 && (
-            <section className="rounded-xl border border-danger/30 bg-danger-soft/40 px-5 py-4">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-danger">
-                  Curative
-                </span>
-                <span className="text-xs text-ink-3 tabular">{data!.gaps.length} item(s)</span>
+            <aside className="mt-10 border-l-[3px] border-rust pl-5 py-2">
+              <div className="eyebrow text-rust mb-2">
+                Curative · {data!.gaps.length} item{data!.gaps.length === 1 ? "" : "s"}
               </div>
               <ul className="space-y-2">
                 {data!.gaps.map((gap, idx) => (
-                  <li key={idx} className="text-sm text-ink-2 flex items-start gap-2">
-                    <span className="text-danger mt-0.5">·</span>
-                    <span className="font-medium">{gap.missing_document}</span>
+                  <li
+                    key={idx}
+                    className="text-[0.95rem] text-ink-2 flex items-baseline gap-2"
+                  >
+                    <span className="text-rust" aria-hidden>·</span>
+                    <span>{gap.missing_document}</span>
                   </li>
                 ))}
               </ul>
-            </section>
+            </aside>
           )}
         </>
       )}
@@ -142,11 +154,35 @@ export default function Runsheet({ projectId }: { projectId: number }) {
   );
 }
 
+function SectionHeading({
+  eyebrow,
+  title,
+  subtitle,
+}: {
+  eyebrow: string;
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="mb-8">
+      <div className="eyebrow mb-2">{eyebrow}</div>
+      <h2 className="font-display text-[2.4rem] font-medium leading-none text-ink tracking-tight">
+        {title}
+      </h2>
+      {subtitle && (
+        <p className="mt-3 font-serif-italic text-ink-2 text-[1.02rem] max-w-2xl">
+          {subtitle}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-      <div className="font-display text-lg text-ink mb-1">{title}</div>
-      <p className="text-sm text-ink-3 max-w-md mx-auto">{body}</p>
+    <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
+      <div className="font-display text-xl text-ink mb-1">{title}</div>
+      <p className="text-sm text-ink-3 max-w-md mx-auto font-serif-italic">{body}</p>
     </div>
   );
 }

@@ -23,12 +23,12 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 const SEVERITY: Record<
   string,
-  { rail: string; chip: string; label: string }
+  { rail: string; label: string; chip: string }
 > = {
-  critical: { rail: "bg-danger", chip: "bg-danger-soft text-danger", label: "Critical" },
-  high: { rail: "bg-warn", chip: "bg-warn-soft text-warn", label: "High" },
-  medium: { rail: "bg-accent", chip: "bg-accent-soft text-accent-strong", label: "Medium" },
-  low: { rail: "bg-info", chip: "bg-info-soft text-info", label: "Low" },
+  critical: { rail: "bg-rust", label: "Critical", chip: "text-rust" },
+  high: { rail: "bg-warn", label: "High", chip: "text-warn" },
+  medium: { rail: "bg-accent", label: "Medium", chip: "text-accent" },
+  low: { rail: "bg-info", label: "Low", chip: "text-info" },
 };
 
 export default function RiskDashboard({ projectId }: { projectId: number }) {
@@ -53,36 +53,39 @@ export default function RiskDashboard({ projectId }: { projectId: number }) {
 
   if (loading) {
     return (
-      <div className="px-8 py-10 text-sm text-ink-3">
+      <div className="px-10 py-12 text-sm text-ink-3">
         <span className="inline-block w-3 h-3 border-2 border-ink-3/30 border-t-ink rounded-full animate-spin mr-2 align-middle" />
-        Loading risk dashboard…
+        <span className="font-serif-italic">Loading risk dashboard…</span>
       </div>
     );
   }
-  if (error) return <div className="px-8 py-10 text-sm text-danger">{error}</div>;
+  if (error) return <div className="px-10 py-12 text-sm text-danger font-serif-italic">{error}</div>;
 
   const isEmpty = !data?.total_leases && !data?.flagged_issues?.length;
 
   return (
-    <div className="px-8 py-10">
+    <div className="px-10 py-12">
       <div className="mb-8">
-        <div className="font-mono text-xs uppercase tracking-[0.18em] text-ink-3 mb-1.5">
-          05 — A&D / Risk
-        </div>
-        <h2 className="font-display text-3xl font-semibold text-ink">Risk dashboard</h2>
+        <div className="eyebrow mb-2">Section V</div>
+        <h2 className="font-display text-[2.4rem] font-medium leading-none text-ink tracking-tight">
+          A&amp;D &amp; risk summary
+        </h2>
+        <p className="mt-3 font-serif-italic text-ink-2 text-[1.02rem] max-w-2xl">
+          The partner-memo view: title defects, burdens, and approaching deadlines at a glance.
+        </p>
       </div>
 
       {isEmpty ? (
-        <div className="rounded-xl border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-          <div className="font-display text-lg text-ink mb-1">No risk data yet</div>
-          <p className="text-sm text-ink-3 max-w-md mx-auto">
+        <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
+          <div className="font-display text-xl text-ink mb-1">No risk data yet</div>
+          <p className="text-sm text-ink-3 font-serif-italic max-w-md mx-auto">
             Upload documents to surface title defects, expirations, and burdens.
           </p>
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-px bg-line rounded-xl overflow-hidden border border-line mb-10">
-            <Metric label="Total leases" value={data!.total_leases.toString()} />
+          <div className="grid grid-cols-3 border-y-[2.5px] border-rule divide-x divide-line-strong mb-10">
+            <Metric label="Leases of record" value={data!.total_leases.toString()} />
             <Metric
               label="Expiring soon"
               value={data!.expiring_soon.toString()}
@@ -96,39 +99,44 @@ export default function RiskDashboard({ projectId }: { projectId: number }) {
 
           {data!.flagged_issues.length > 0 && (
             <>
-              <div className="flex items-baseline justify-between mb-4">
-                <h3 className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-3">
-                  Flagged issues
+              <div className="flex items-baseline justify-between mb-4 pb-3 rule-hairline">
+                <h3 className="font-display text-xl font-medium text-ink">
+                  Matters requiring senior review
                 </h3>
-                <span className="text-xs text-ink-3 tabular">
-                  {data!.flagged_issues.length} requiring senior review
+                <span className="text-sm font-serif-italic text-ink-3 tabular">
+                  {data!.flagged_issues.length}
                 </span>
               </div>
-              <div className="space-y-2">
+              <ul className="divide-y divide-line">
                 {data!.flagged_issues.map((issue) => {
                   const meta = SEVERITY[issue.severity] || SEVERITY.low;
                   return (
-                    <div
-                      key={issue.id}
-                      className="relative rounded-xl border border-line bg-surface pl-5 pr-4 py-4 hover:border-line-strong transition-colors"
-                    >
-                      <span className={`absolute left-0 top-3 bottom-3 w-1 rounded-r ${meta.rail}`} />
-                      <div className="flex items-start justify-between gap-4">
+                    <li key={issue.id} className="relative py-5 pl-5">
+                      <span className={`absolute left-0 top-6 bottom-6 w-[3px] ${meta.rail}`} aria-hidden />
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-6 items-baseline">
                         <div className="min-w-0">
-                          <div className="font-display font-semibold text-ink">{issue.lease}</div>
-                          <div className="mt-1 text-sm text-ink-2">{issue.description}</div>
+                          <div className="flex items-baseline gap-3 flex-wrap">
+                            <span className="font-display text-[1.2rem] font-medium text-ink leading-tight">
+                              {issue.lease}
+                            </span>
+                            <span className="text-xs font-serif-italic text-ink-3">
+                              {issue.risk_type}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[0.98rem] text-ink-2 leading-snug">
+                            {issue.description}
+                          </p>
                         </div>
-                        <div className="flex flex-col items-end gap-1.5 shrink-0">
-                          <span className={`text-xs font-mono uppercase tracking-wider px-2 py-1 rounded-md ${meta.chip}`}>
+                        <div className="text-right">
+                          <span className={`font-serif-italic text-sm ${meta.chip}`}>
                             {meta.label}
                           </span>
-                          <span className="text-[0.7rem] font-mono text-ink-3">{issue.risk_type}</span>
                         </div>
                       </div>
-                    </div>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             </>
           )}
         </>
@@ -148,11 +156,11 @@ function Metric({
 }) {
   const valueColor = tone === "warn" ? "text-warn" : "text-ink";
   return (
-    <div className="bg-surface px-5 py-5">
-      <div className="text-[0.7rem] font-mono uppercase tracking-[0.16em] text-ink-3 mb-2">
-        {label}
+    <div className="bg-paper px-6 py-6">
+      <div className="eyebrow mb-2">{label}</div>
+      <div className={`font-display text-[2.4rem] font-medium leading-none tabular ${valueColor}`}>
+        {value}
       </div>
-      <div className={`font-display text-3xl font-semibold tabular ${valueColor}`}>{value}</div>
     </div>
   );
 }

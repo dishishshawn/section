@@ -34,20 +34,17 @@ export default function ExportButton({ projectId, projectName }: { projectId: nu
     <button
       onClick={handleExport}
       disabled={exporting}
-      className="group inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-ink text-white text-sm font-medium hover:bg-accent-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      className="inline-flex items-baseline gap-2 px-4 py-2 border border-rule text-ink text-[0.95rem] font-serif-italic hover:bg-ink hover:text-paper transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
     >
       {exporting ? (
         <>
-          <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          Generating PDF
+          <span className="inline-block w-3 h-3 border-2 border-ink/30 border-t-ink rounded-full animate-spin" />
+          Generating…
         </>
       ) : (
         <>
-          <span className="font-mono text-xs uppercase tracking-wider text-zinc-300 group-hover:text-accent-soft transition-colors">
-            PDF
-          </span>
-          <span className="w-px h-3 bg-zinc-600 group-hover:bg-accent/50 transition-colors" />
-          Export report
+          Print ownership report
+          <span className="text-xs not-italic" aria-hidden>↗</span>
         </>
       )}
     </button>

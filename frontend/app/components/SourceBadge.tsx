@@ -19,10 +19,14 @@ export default function SourceBadge({ source }: SourceBadgeProps) {
 
   if (!source) {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+      <span className="inline-flex items-center gap-1 text-xs text-ink-4 font-serif-italic">
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.5}
+            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
         </svg>
         no source
       </span>
@@ -30,63 +34,77 @@ export default function SourceBadge({ source }: SourceBadgeProps) {
   }
 
   const fileUrl = `${API_URL}/documents/${source.document_id}/file`;
-  const shortName = source.filename.length > 35
-    ? source.filename.slice(0, 32) + "..."
-    : source.filename;
+  const shortName =
+    source.filename.length > 40 ? source.filename.slice(0, 37) + "…" : source.filename;
 
   return (
     <div className="relative inline-block">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+        className="inline-flex items-baseline gap-1.5 text-sm text-accent hover:text-accent-strong transition-colors font-serif-italic"
       >
-        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        <span className="truncate max-w-[240px]">{shortName}</span>
+        <span className="text-[0.7rem] not-italic" aria-hidden>§</span>
+        <span className="truncate max-w-[260px] underline underline-offset-2 decoration-accent/40 hover:decoration-accent">
+          {shortName}
+        </span>
       </button>
 
       {open && (
-        <div className="absolute z-10 mt-1 right-0 w-96 p-3 bg-white border border-slate-200 rounded-lg shadow-lg">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <div className="text-xs font-semibold text-slate-700 truncate flex-1">
-              {source.filename}
+        <>
+          {/* click-away backdrop */}
+          <div
+            className="fixed inset-0 z-20"
+            onClick={() => setOpen(false)}
+            aria-hidden
+          />
+          <div className="absolute z-30 mt-2 right-0 w-[26rem] bg-surface border border-rule shadow-[0_10px_30px_-10px_rgba(29,38,53,0.2)]">
+            {/* top double rule — document affordance */}
+            <div className="border-b-[2.5px] border-rule" />
+            <div className="border-b border-rule" />
+
+            <div className="px-5 py-4">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  <div className="eyebrow mb-0.5">Source of record</div>
+                  <div className="font-display text-[1rem] text-ink truncate leading-tight">
+                    {source.filename}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="text-ink-3 hover:text-ink text-lg leading-none -mt-1"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+
+              {source.quote ? (
+                <figure className="mb-4">
+                  <div className="eyebrow mb-1.5">Extracted from</div>
+                  <blockquote className="border-l-[2.5px] border-accent pl-4 py-1 font-serif-italic text-ink-2 text-[0.98rem] leading-relaxed">
+                    &ldquo;{source.quote}&rdquo;
+                  </blockquote>
+                </figure>
+              ) : (
+                <div className="text-sm text-ink-3 font-serif-italic mb-4">
+                  No verbatim quote was stored for this field.
+                </div>
+              )}
+
+              <a
+                href={fileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-baseline gap-1.5 text-sm text-accent hover:text-accent-strong font-serif-italic"
+              >
+                Open source document
+                <span className="not-italic text-xs" aria-hidden>↗</span>
+              </a>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="text-slate-400 hover:text-slate-600 text-sm leading-none"
-              aria-label="Close"
-            >
-              ×
-            </button>
           </div>
-          {source.quote ? (
-            <>
-              <div className="text-xs text-slate-500 mb-1">Extracted from:</div>
-              <blockquote className="text-xs text-slate-700 italic border-l-2 border-slate-300 pl-2 mb-3">
-                &ldquo;{source.quote}&rdquo;
-              </blockquote>
-            </>
-          ) : (
-            <div className="text-xs text-slate-500 italic mb-3">
-              No verbatim quote stored for this field.
-            </div>
-          )}
-          <a
-            href={fileUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-            Open source document
-          </a>
-        </div>
+        </>
       )}
     </div>
   );

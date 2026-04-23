@@ -46,12 +46,12 @@ function statusTitle(status: string): string {
 }
 
 function statusClass(status: string): string {
-  if (!status) return "bg-line/40 text-ink-3";
-  if (status.startsWith("skipped")) return "bg-warn-soft text-warn";
-  if (status.startsWith("failed")) return "bg-danger-soft text-danger";
-  if (status === "complete") return "bg-positive-soft text-positive";
-  if (status === "in_progress") return "bg-info-soft text-info";
-  return "bg-line/40 text-ink-3";
+  if (!status) return "text-ink-3";
+  if (status.startsWith("skipped")) return "text-warn";
+  if (status.startsWith("failed")) return "text-danger";
+  if (status === "complete") return "text-positive";
+  if (status === "in_progress") return "text-info";
+  return "text-ink-3";
 }
 
 export default function DocumentUpload({ projectId, onExtractionComplete }: DocumentUploadProps) {
@@ -221,14 +221,18 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
   const errorCount = progress.filter((p) => p.status === "error").length;
 
   return (
-    <div className="px-8 py-10">
+    <div className="px-10 py-12">
       <div className="mb-8">
-        <div className="font-mono text-xs uppercase tracking-[0.18em] text-ink-3 mb-1.5">
-          01 — Documents
-        </div>
-        <h2 className="font-display text-3xl font-semibold text-ink">Project documents</h2>
+        <div className="eyebrow mb-2">Section I</div>
+        <h2 className="font-display text-[2.4rem] font-medium leading-none text-ink tracking-tight">
+          Documents
+        </h2>
+        <p className="mt-3 font-serif-italic text-ink-2 text-[1.02rem] max-w-2xl">
+          Drop recorded instruments here. Every upload is extracted, cited, and filed.
+        </p>
       </div>
 
+      {/* Drop zone — a proper "file drawer" feel */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -236,36 +240,25 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
         }}
         onDragLeave={() => setDragActive(false)}
         onDrop={handleDrop}
-        className={`relative mb-6 rounded-xl border-2 border-dashed px-8 py-12 text-center transition-all overflow-hidden ${
+        className={`relative mb-10 border-[1.5px] border-dashed px-10 py-14 text-center transition-all ${
           dragActive
-            ? "border-accent bg-accent-tint scale-[1.005]"
-            : "border-line-strong bg-surface hover:border-ink/30 hover:bg-surface-2"
+            ? "border-accent bg-accent-tint"
+            : "border-line-strong bg-surface-2 hover:bg-surface"
         }`}
       >
-        <div className="section-grid pointer-events-none absolute inset-0 opacity-30" />
         <div className="relative">
-          <div className="mx-auto mb-4 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-ink text-white">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-              />
-            </svg>
-          </div>
-          <p className="font-display text-lg font-semibold text-ink mb-1">
-            Drop files or a folder
+          <p className="font-display text-2xl font-medium text-ink mb-1 leading-none">
+            Drop files here
           </p>
-          <p className="text-xs text-ink-3 mb-5 font-mono uppercase tracking-wider">
-            PDF · TXT · JPG · PNG · TIFF
+          <p className="font-serif-italic text-ink-2 mb-6">
+            or select from your computer — a folder works too
           </p>
-          <div className="flex gap-2 justify-center">
+          <div className="flex gap-3 justify-center">
             <button
               type="button"
               onClick={() => filesInputRef.current?.click()}
               disabled={uploading}
-              className="px-4 py-2 rounded-lg bg-ink text-white text-sm font-medium hover:bg-accent-strong transition-colors disabled:opacity-50"
+              className="px-5 py-2.5 bg-ink text-paper text-[0.95rem] font-medium hover:bg-accent transition-colors disabled:opacity-50"
             >
               Select files
             </button>
@@ -273,11 +266,14 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
               type="button"
               onClick={() => folderInputRef.current?.click()}
               disabled={uploading}
-              className="px-4 py-2 rounded-lg bg-surface border border-line-strong text-ink text-sm font-medium hover:border-ink/40 hover:bg-surface-2 transition-colors disabled:opacity-50"
+              className="px-5 py-2.5 bg-surface border border-line-strong text-ink text-[0.95rem] font-medium hover:border-ink/40 hover:bg-surface-2 transition-colors disabled:opacity-50"
             >
               Select folder
             </button>
           </div>
+          <p className="mt-6 text-xs text-ink-3 font-serif-italic">
+            Accepts PDF, TXT, JPG, PNG, TIFF
+          </p>
         </div>
         <input
           ref={filesInputRef}
@@ -300,87 +296,102 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
       </div>
 
       {progress.length > 0 && (
-        <div className="mb-6 rounded-xl border border-line bg-surface px-4 py-3">
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="text-xs font-mono uppercase tracking-[0.16em] text-ink-2">
-              {pendingCount > 0
-                ? `Uploading ${pendingCount} of ${progress.length}…`
-                : errorCount > 0
-                  ? `Finished with ${errorCount} error${errorCount === 1 ? "" : "s"}`
-                  : "Upload complete"}
-            </h3>
+        <div className="mb-8 border-l-2 border-accent pl-5 py-2">
+          <div className="flex justify-between items-baseline mb-2">
+            <div>
+              <div className="eyebrow">In progress</div>
+              <div className="font-display text-lg text-ink mt-0.5">
+                {pendingCount > 0
+                  ? `Uploading ${pendingCount} of ${progress.length}…`
+                  : errorCount > 0
+                    ? `Finished with ${errorCount} error${errorCount === 1 ? "" : "s"}`
+                    : "Upload complete"}
+              </div>
+            </div>
             {pendingCount === 0 && (
               <button
                 onClick={() => setProgress([])}
-                className="text-xs text-ink-3 hover:text-ink transition-colors"
+                className="text-sm font-serif-italic text-ink-3 hover:text-ink transition-colors"
               >
-                Dismiss
+                dismiss
               </button>
             )}
           </div>
-          <div className="space-y-1 max-h-40 overflow-y-auto">
+          <ul className="divide-y divide-line max-h-40 overflow-y-auto">
             {progress.map((p, idx) => (
-              <div key={idx} className="flex justify-between items-center text-xs gap-3 py-0.5">
-                <span className="truncate flex-1 text-ink-2 font-mono">{p.filename}</span>
-                {p.status === "uploading" && <span className="text-info">uploading…</span>}
-                {p.status === "done" && <span className="text-positive">done</span>}
-                {p.status === "duplicate" && <span className="text-warn">already in project</span>}
+              <li key={idx} className="flex justify-between items-center text-sm gap-3 py-1.5">
+                <span className="truncate flex-1 text-ink-2 oldstyle">{p.filename}</span>
+                {p.status === "uploading" && (
+                  <span className="text-info font-serif-italic">uploading…</span>
+                )}
+                {p.status === "done" && (
+                  <span className="text-positive font-serif-italic">filed</span>
+                )}
+                {p.status === "duplicate" && (
+                  <span className="text-warn font-serif-italic">already on file</span>
+                )}
                 {p.status === "error" && (
-                  <span className="text-danger" title={p.error}>
+                  <span className="text-rust font-serif-italic" title={p.error}>
                     failed
                   </span>
                 )}
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       )}
 
       {error && (
-        <div className="mb-6 flex items-start gap-3 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3">
-          <span className="text-danger font-mono text-xs mt-0.5">ERR</span>
-          <span className="text-danger text-sm">{error}</span>
+        <div className="mb-6 border-l-2 border-rust bg-rust-soft/30 px-4 py-3">
+          <span className="font-serif-italic text-rust mr-2">Error —</span>
+          <span className="text-ink-2 text-sm">{error}</span>
         </div>
       )}
 
-      <div className="flex items-baseline justify-between mb-4">
-        <h3 className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-3">
-          Library
+      <div className="flex items-baseline justify-between mb-4 pb-3 rule-hairline">
+        <h3 className="font-display text-xl font-medium text-ink">
+          Document library
         </h3>
-        <span className="text-xs text-ink-3 tabular">
-          {documents.length} {documents.length === 1 ? "document" : "documents"}
+        <span className="text-sm font-serif-italic text-ink-3 tabular">
+          {documents.length} on file
         </span>
       </div>
 
       {loading && documents.length === 0 ? (
-        <div className="rounded-xl border border-line bg-surface px-6 py-12 text-center text-sm text-ink-3">
+        <div className="px-6 py-12 text-center text-sm text-ink-3">
           <span className="inline-block w-3 h-3 border-2 border-ink-3/30 border-t-ink rounded-full animate-spin mr-2 align-middle" />
-          Loading documents…
+          <span className="font-serif-italic">Loading documents…</span>
         </div>
       ) : documents.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-line-strong bg-surface-2 px-6 py-12 text-center">
-          <div className="font-display text-base text-ink mb-1">No documents yet</div>
-          <p className="text-sm text-ink-3">Start by uploading a lease or deed.</p>
+        <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-12 text-center">
+          <div className="font-display text-xl text-ink mb-1">No documents filed</div>
+          <p className="text-sm text-ink-3 font-serif-italic">
+            Start by uploading a lease or deed.
+          </p>
         </div>
       ) : (
-        <ul className="space-y-2">
+        <ul className="divide-y divide-line">
           {documents.map((doc) => (
             <li
               key={doc.id}
-              className="rounded-xl border border-line bg-surface px-4 py-3 flex justify-between items-center gap-4 hover:border-line-strong transition-colors"
+              className="py-4 flex justify-between items-center gap-4 hover:bg-surface-2 -mx-4 px-4 transition-colors"
             >
-              <div className="min-w-0 flex-1 flex items-center gap-3">
-                <span className="flex-shrink-0 w-8 h-8 rounded-md bg-paper border border-line flex items-center justify-center text-[0.6rem] font-mono uppercase text-ink-3">
-                  {(doc.filename.split(".").pop() || "doc").slice(0, 4)}
+              <div className="min-w-0 flex-1 flex items-baseline gap-4">
+                <span className="flex-shrink-0 eyebrow text-[0.65rem] tabular">
+                  {(doc.filename.split(".").pop() || "doc").toUpperCase().slice(0, 4)}
                 </span>
                 <div className="min-w-0">
-                  <p className="font-medium text-ink truncate">{doc.filename}</p>
-                  <p className="text-xs text-ink-3 font-mono">{doc.mime || "unknown type"}</p>
+                  <p className="font-display text-[1.05rem] text-ink truncate leading-tight">
+                    {doc.filename}
+                  </p>
+                  <p className="text-xs text-ink-3 font-serif-italic mt-0.5">
+                    {doc.mime || "unknown type"}
+                  </p>
                 </div>
               </div>
               <span
                 title={statusTitle(doc.extraction_status)}
-                className={`px-2 py-1 text-[0.7rem] font-mono uppercase tracking-wider rounded-md whitespace-nowrap ${statusClass(doc.extraction_status)}`}
+                className={`font-serif-italic text-sm whitespace-nowrap ${statusClass(doc.extraction_status)}`}
               >
                 {statusLabel(doc.extraction_status)}
               </span>

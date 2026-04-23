@@ -20,69 +20,73 @@ interface ProjectDetailProps {
 export default function ProjectDetail({ projectId, projectName, jurisdiction, onBack }: ProjectDetailProps) {
   const [currentView, setCurrentView] = useState<ViewType>("documents");
 
-  const views: { id: ViewType; label: string; hint: string }[] = [
-    { id: "documents", label: "Documents", hint: "01" },
-    { id: "runsheet", label: "Runsheet", hint: "02" },
-    { id: "ownership", label: "Ownership", hint: "03" },
-    { id: "calendar", label: "Obligations", hint: "04" },
-    { id: "risk", label: "Risk", hint: "05" },
+  const views: { id: ViewType; label: string }[] = [
+    { id: "documents", label: "Documents" },
+    { id: "runsheet", label: "Runsheet" },
+    { id: "ownership", label: "Ownership" },
+    { id: "calendar", label: "Obligations" },
+    { id: "risk", label: "Risk" },
   ];
 
   return (
     <div className="min-h-screen bg-paper">
-      <header className="relative overflow-hidden border-b border-line-strong bg-ink text-white">
-        <div className="section-grid pointer-events-none absolute inset-0 opacity-30" />
-        <div className="relative max-w-6xl mx-auto px-8 py-7">
+      {/* Masthead — styled like the top of a county-clerk recorded document */}
+      <header className="bg-paper-deep">
+        <div className="max-w-6xl mx-auto px-10 pt-8 pb-10">
           <button
             onClick={onBack}
-            className="group inline-flex items-center gap-2 text-xs font-mono uppercase tracking-[0.16em] text-zinc-400 hover:text-white transition-colors mb-5"
+            className="group inline-flex items-center gap-2 text-sm text-ink-3 hover:text-ink transition-colors mb-8"
           >
-            <span className="inline-block transition-transform group-hover:-translate-x-0.5">←</span>
-            All projects
+            <span className="inline-block text-accent transition-transform group-hover:-translate-x-0.5">
+              ←
+            </span>
+            <span className="font-serif-italic">All projects</span>
           </button>
-          <div className="flex items-start gap-4">
-            <span className="brand-mark mt-1.5">S§</span>
+
+          <div className="flex items-start gap-6">
+            <span className="brand-mark" aria-hidden>§</span>
             <div className="flex-1 min-w-0">
-              <h1 className="font-display text-3xl font-semibold leading-tight truncate">
+              <div className="eyebrow mb-1.5">Project file</div>
+              <h1 className="font-display text-[2.6rem] font-medium leading-[1.05] text-ink tracking-tight">
                 {projectName}
               </h1>
-              <div className="mt-2 flex items-center gap-3 text-xs text-zinc-400 font-mono">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-accent" />
-                  {jurisdiction}
+              <div className="mt-3 flex items-center flex-wrap gap-x-5 gap-y-1 text-sm text-ink-2">
+                <span className="font-serif-italic">{jurisdiction}</span>
+                <span className="text-line-strong">·</span>
+                <span className="tabular text-ink-3">
+                  No. {String(projectId).padStart(4, "0")}
                 </span>
-                <span className="text-zinc-600">·</span>
-                <span className="tabular">PROJECT-{String(projectId).padStart(4, "0")}</span>
               </div>
             </div>
           </div>
         </div>
+        {/* Legal-document double rule */}
+        <div className="max-w-6xl mx-auto px-10">
+          <div className="border-t-[2.5px] border-rule" />
+          <div className="border-t border-rule mt-[3px]" />
+        </div>
       </header>
 
-      <div className="sticky top-0 z-10 border-b border-line bg-paper/85 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-8">
+      {/* Tab strip — no mono numerals, no all-caps, no tech tracking. Just a refined row. */}
+      <div className="sticky top-0 z-10 bg-paper/95 backdrop-blur-sm border-b border-line-strong">
+        <div className="max-w-6xl mx-auto px-10">
           <div className="flex items-center justify-between gap-4">
-            <nav className="flex -mb-px overflow-x-auto" aria-label="Project sections">
+            <nav className="flex -mb-px" aria-label="Project sections">
               {views.map((view) => {
                 const active = currentView === view.id;
                 return (
                   <button
                     key={view.id}
                     onClick={() => setCurrentView(view.id)}
-                    className={`group relative px-4 py-4 flex items-center gap-2 text-sm font-medium whitespace-nowrap transition-colors ${
-                      active ? "text-ink" : "text-ink-3 hover:text-ink"
+                    className={`relative px-5 py-4 text-[0.95rem] transition-colors ${
+                      active
+                        ? "text-ink font-medium"
+                        : "text-ink-3 hover:text-ink font-normal"
                     }`}
                   >
-                    <span
-                      className={`font-mono text-[0.65rem] tabular ${
-                        active ? "text-accent" : "text-ink-3 group-hover:text-ink-2"
-                      }`}
-                    >
-                      {view.hint}
-                    </span>
                     {view.label}
                     {active && (
-                      <span className="absolute left-3 right-3 -bottom-px h-0.5 bg-accent rounded-full" />
+                      <span className="absolute left-5 right-5 -bottom-px h-[2px] bg-accent" />
                     )}
                   </button>
                 );

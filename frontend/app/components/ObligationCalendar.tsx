@@ -22,22 +22,22 @@ function formatType(raw: string): string {
 
 const BUCKETS = {
   high: {
-    rail: "bg-danger",
-    chipDot: "bg-danger",
-    label: "High priority",
-    note: "Next 30 days",
+    label: "Immediate attention",
+    note: "Within 30 days",
+    accent: "text-rust",
+    rail: "bg-rust",
   },
   medium: {
+    label: "On the calendar",
+    note: "31 to 120 days out",
+    accent: "text-warn",
     rail: "bg-warn",
-    chipDot: "bg-warn",
-    label: "Medium",
-    note: "31–120 days",
   },
   low: {
-    rail: "bg-info",
-    chipDot: "bg-info",
-    label: "Low",
-    note: "120+ days",
+    label: "In the distance",
+    note: "More than 120 days out",
+    accent: "text-positive",
+    rail: "bg-positive",
   },
 } as const;
 
@@ -63,32 +63,34 @@ export default function ObligationCalendar({ projectId }: { projectId: number })
 
   if (loading) {
     return (
-      <div className="px-8 py-10 text-sm text-ink-3">
+      <div className="px-10 py-12 text-sm text-ink-3">
         <span className="inline-block w-3 h-3 border-2 border-ink-3/30 border-t-ink rounded-full animate-spin mr-2 align-middle" />
-        Loading obligations…
+        <span className="font-serif-italic">Loading obligations…</span>
       </div>
     );
   }
-  if (error) return <div className="px-8 py-10 text-sm text-danger">{error}</div>;
+  if (error) return <div className="px-10 py-12 text-sm text-danger font-serif-italic">{error}</div>;
 
   const heading = (
     <div className="mb-8">
-      <div className="font-mono text-xs uppercase tracking-[0.18em] text-ink-3 mb-1.5">
-        04 — Obligations
-      </div>
-      <h2 className="font-display text-3xl font-semibold text-ink">Obligation calendar</h2>
+      <div className="eyebrow mb-2">Section IV</div>
+      <h2 className="font-display text-[2.4rem] font-medium leading-none text-ink tracking-tight">
+        Obligation calendar
+      </h2>
+      <p className="mt-3 font-serif-italic text-ink-2 text-[1.02rem] max-w-2xl">
+        Term expirations, Pugh triggers, rentals, and drilling deadlines &mdash; in order of urgency.
+      </p>
     </div>
   );
 
   if (obligations.length === 0) {
     return (
-      <div className="px-8 py-10">
+      <div className="px-10 py-12">
         {heading}
-        <div className="rounded-xl border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-          <div className="font-display text-lg text-ink mb-1">No obligations yet</div>
-          <p className="text-sm text-ink-3 max-w-md mx-auto">
-            Upload leases in the Documents tab to track term expirations, Pugh triggers, and rental
-            payments.
+        <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
+          <div className="font-display text-xl text-ink mb-1">Nothing on the calendar</div>
+          <p className="text-sm text-ink-3 max-w-md mx-auto font-serif-italic">
+            Upload leases in the Documents tab to track term expirations and payments.
           </p>
         </div>
       </div>
@@ -102,52 +104,56 @@ export default function ObligationCalendar({ projectId }: { projectId: number })
   ];
 
   return (
-    <div className="px-8 py-10">
+    <div className="px-10 py-12">
       {heading}
-      <div className="space-y-8">
+
+      <div className="space-y-10">
         {buckets.map(({ key, items }) =>
           items.length === 0 ? null : (
             <section key={key}>
-              <div className="flex items-baseline justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${BUCKETS[key].chipDot}`} />
-                  <h3 className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink">
+              <div className="flex items-baseline justify-between mb-3 pb-2 rule-hairline">
+                <div>
+                  <h3 className={`font-display text-xl font-medium ${BUCKETS[key].accent}`}>
                     {BUCKETS[key].label}
                   </h3>
-                  <span className="text-xs text-ink-3 font-mono">{BUCKETS[key].note}</span>
+                  <div className="text-xs font-serif-italic text-ink-3 mt-0.5">
+                    {BUCKETS[key].note}
+                  </div>
                 </div>
-                <span className="text-xs text-ink-3 tabular">{items.length}</span>
+                <span className="text-sm font-serif-italic text-ink-3 tabular">
+                  {items.length}
+                </span>
               </div>
-              <div className="space-y-2">
+
+              <ul className="divide-y divide-line">
                 {items.map((obl) => (
-                  <div
-                    key={obl.id}
-                    className="relative rounded-xl border border-line bg-surface pl-5 pr-4 py-4 hover:border-line-strong transition-colors"
-                  >
-                    <span className={`absolute left-0 top-3 bottom-3 w-1 rounded-r ${BUCKETS[key].rail}`} />
-                    <div className="flex items-start justify-between gap-4">
+                  <li key={obl.id} className="py-5 relative pl-5">
+                    <span className={`absolute left-0 top-6 bottom-6 w-[3px] ${BUCKETS[key].rail}`} aria-hidden />
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-6 items-baseline">
                       <div className="min-w-0">
-                        <div className="font-display font-semibold text-ink">
+                        <div className="font-display text-[1.2rem] font-medium text-ink leading-tight">
                           {formatType(obl.type)}
                         </div>
-                        <div className="mt-1 text-sm text-ink-2">{obl.description}</div>
+                        <p className="mt-1 text-[0.98rem] text-ink-2 leading-snug">
+                          {obl.description}
+                        </p>
                         <div className="mt-2">
                           <SourceBadge source={obl.source} />
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <div className="font-display text-xl font-semibold tabular text-ink">
+                      <div className="text-right">
+                        <div className="font-display text-[1.8rem] font-medium tabular text-ink leading-none">
                           {obl.days_until}
-                          <span className="text-xs text-ink-3 font-normal ml-1">days</span>
+                          <span className="text-xs font-serif-italic text-ink-3 font-normal ml-1">days</span>
                         </div>
-                        <div className="text-[0.7rem] font-mono tabular text-ink-3">
+                        <div className="mt-1.5 text-xs tabular text-ink-3">
                           {obl.due_date?.slice(0, 10)}
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </section>
           )
         )}
