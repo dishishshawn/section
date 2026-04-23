@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import ProjectDetail from "./ProjectDetail";
+import GlobalSearch from "./GlobalSearch";
 
 interface Project {
   id: number;
@@ -130,6 +131,10 @@ export default function ProjectShell() {
             extracted from your recorded documents into a single structured
             record. Every fact cites the page it came from.
           </p>
+
+          <div className="mt-8">
+            <GlobalSearch onOpenProject={(id) => setSelectedProjectId(id)} />
+          </div>
         </div>
       </header>
 
@@ -238,7 +243,7 @@ export default function ProjectShell() {
                   >
                     {/* Folio number — lining figures, hand-stamped feel */}
                     <div className="flex-shrink-0 w-14 text-right">
-                      <div className="font-display text-[1.35rem] text-ink-3 tabular leading-none">
+                      <div className="font-numeric text-[1.35rem] text-ink-3 leading-none">
                         {String(idx + 1).padStart(2, "0")}
                       </div>
                       <div className="eyebrow mt-0.5 text-[0.65rem]">Folio</div>
@@ -250,10 +255,6 @@ export default function ProjectShell() {
                       <div className="mt-1.5 flex items-center gap-3 text-sm">
                         <span className="font-serif-italic text-ink-2">
                           {project.jurisdiction}
-                        </span>
-                        <span className="text-line-strong">·</span>
-                        <span className="tabular text-ink-3">
-                          No.&nbsp;{String(project.id).padStart(4, "0")}
                         </span>
                         <span className="text-line-strong">·</span>
                         <span className="tabular text-ink-3">

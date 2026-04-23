@@ -106,7 +106,7 @@ export default function OwnershipView({ projectId }: { projectId: number }) {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="font-display text-[1.35rem] text-ink tabular leading-none">
+                    <div className="font-numeric text-[1.35rem] text-ink leading-none">
                       {owner.percentage}%
                     </div>
                   </div>
@@ -156,7 +156,7 @@ function Stat({
   return (
     <div className="bg-paper px-6 py-6">
       <div className="eyebrow mb-2">{label}</div>
-      <div className={`font-display text-[2.4rem] font-medium leading-none tabular ${valueColor}`}>
+      <div className={`font-numeric text-[2.4rem] leading-none ${valueColor}`}>
         {value}
         <span className="text-sm font-serif-italic text-ink-3 font-normal ml-1.5">ac</span>
       </div>

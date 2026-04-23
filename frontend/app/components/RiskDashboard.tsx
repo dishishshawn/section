@@ -158,7 +158,7 @@ function Metric({
   return (
     <div className="bg-paper px-6 py-6">
       <div className="eyebrow mb-2">{label}</div>
-      <div className={`font-display text-[2.4rem] font-medium leading-none tabular ${valueColor}`}>
+      <div className={`font-numeric text-[2.4rem] leading-none ${valueColor}`}>
         {value}
       </div>
     </div>

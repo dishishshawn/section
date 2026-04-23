@@ -142,7 +142,7 @@ export default function ObligationCalendar({ projectId }: { projectId: number })
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="font-display text-[1.8rem] font-medium tabular text-ink leading-none">
+                        <div className="font-numeric text-[1.8rem] text-ink leading-none">
                           {obl.days_until}
                           <span className="text-xs font-serif-italic text-ink-3 font-normal ml-1">days</span>
                         </div>

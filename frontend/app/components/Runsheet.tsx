@@ -93,7 +93,7 @@ export default function Runsheet({ projectId }: { projectId: number }) {
                   >
                     {/* Entry number */}
                     <div className="text-right">
-                      <div className="font-display text-[1.1rem] text-ink-3 tabular leading-none">
+                      <div className="font-numeric text-[1.1rem] text-ink-3 leading-none">
                         {String(idx + 1).padStart(2, "0")}
                       </div>
                     </div>
@@ -131,22 +131,62 @@ export default function Runsheet({ projectId }: { projectId: number }) {
           </div>
 
           {data!.gaps.length > 0 && (
-            <aside className="mt-10 border-l-[3px] border-rust pl-5 py-2">
-              <div className="eyebrow text-rust mb-2">
-                Curative · {data!.gaps.length} item{data!.gaps.length === 1 ? "" : "s"}
+            <section className="mt-16">
+              <div className="mb-8 flex items-end justify-between gap-6">
+                <div>
+                  <div className="eyebrow text-rust mb-2">Section III</div>
+                  <h2 className="font-display text-[2.4rem] font-medium leading-none text-ink tracking-tight">
+                    Curative
+                  </h2>
+                  <p className="mt-3 font-serif-italic text-ink-2 text-[1.02rem] max-w-2xl">
+                    Gaps, defects, and items that must be resolved before title can be certified.
+                  </p>
+                </div>
+                <div className="tabular text-sm text-ink-3 whitespace-nowrap pb-1">
+                  {data!.gaps.length} item{data!.gaps.length === 1 ? "" : "s"}
+                </div>
               </div>
-              <ul className="space-y-2">
-                {data!.gaps.map((gap, idx) => (
-                  <li
-                    key={idx}
-                    className="text-[0.95rem] text-ink-2 flex items-baseline gap-2"
-                  >
-                    <span className="text-rust" aria-hidden>·</span>
-                    <span>{gap.missing_document}</span>
-                  </li>
-                ))}
-              </ul>
-            </aside>
+
+              <div className="border-t-[2.5px] border-rust/70">
+                <div className="border-t border-rule mt-[3px] mb-4" />
+                <ol>
+                  {data!.gaps.map((gap, idx) => {
+                    const hasParties = Boolean(gap.from && gap.to);
+                    return (
+                      <li
+                        key={idx}
+                        className="grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 items-baseline py-5 border-b border-line last:border-b-0"
+                      >
+                        <div className="text-right">
+                          <div className="font-numeric text-[1.1rem] text-ink-3 leading-none">
+                            {String(idx + 1).padStart(2, "0")}
+                          </div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-display text-[1.15rem] font-medium text-ink mb-1">
+                            {gap.missing_document}
+                          </div>
+                          {hasParties && (
+                            <div className="text-[0.98rem] text-ink-2 leading-snug">
+                              <span className="font-medium">{gap.from}</span>
+                              <span className="mx-2 text-accent">→</span>
+                              <span className="font-medium">{gap.to}</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <span className="font-serif-italic text-sm text-rust">
+                            Curative
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+                <div className="border-b-[2.5px] border-rust/70 mt-[3px]" />
+                <div className="border-b border-rule mt-[3px]" />
+              </div>
+            </section>
           )}
         </>
       )}

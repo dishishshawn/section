@@ -478,6 +478,86 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "deleted", "id": project_id}
 
+@router.get("/search")
+def global_search(q: str = "", limit: int = 10, db: Session = Depends(get_db)):
+    term = (q or "").strip()
+    if len(term) < 2:
+        return {"query": term, "results": {"projects": [], "documents": [], "parties": [], "tracts": []}}
+
+    like = f"%{term}%"
+
+    projects = (
+        db.query(Project)
+        .filter((Project.name.ilike(like)) | (Project.jurisdiction.ilike(like)))
+        .limit(limit)
+        .all()
+    )
+
+    documents = (
+        db.query(Document, Project)
+        .join(Project, Document.project_id == Project.id)
+        .filter(Document.s3_key.ilike(like))
+        .limit(limit)
+        .all()
+    )
+
+    parties = (
+        db.query(Party, Project)
+        .join(Project, Party.project_id == Project.id)
+        .filter(Party.name.ilike(like))
+        .limit(limit)
+        .all()
+    )
+
+    tracts = (
+        db.query(Tract, Project)
+        .join(Project, Tract.project_id == Project.id)
+        .filter(Tract.legal_description.ilike(like))
+        .limit(limit)
+        .all()
+    )
+
+    def _filename(s3_key: str) -> str:
+        if not s3_key:
+            return ""
+        return s3_key.split("_", 1)[-1] if "_" in s3_key else s3_key
+
+    return {
+        "query": term,
+        "results": {
+            "projects": [
+                {"id": p.id, "name": p.name, "jurisdiction": p.jurisdiction}
+                for p in projects
+            ],
+            "documents": [
+                {
+                    "id": d.id,
+                    "filename": _filename(d.s3_key),
+                    "project_id": proj.id,
+                    "project_name": proj.name,
+                }
+                for d, proj in documents
+            ],
+            "parties": [
+                {
+                    "name": party.name,
+                    "project_id": proj.id,
+                    "project_name": proj.name,
+                }
+                for party, proj in parties
+            ],
+            "tracts": [
+                {
+                    "legal_description": t.legal_description,
+                    "project_id": proj.id,
+                    "project_name": proj.name,
+                }
+                for t, proj in tracts
+            ],
+        },
+    }
+
+
 @router.post("/health")
 def health():
     return {"status": "ok"}
