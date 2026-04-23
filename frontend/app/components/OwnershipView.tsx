@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from "react";
 import axios from "axios";
+import SourceBadge, { SourceRef } from "./SourceBadge";
 
 interface Owner {
   name: string;
   fraction: string;
   percentage: number;
   mineral_estate: string;
+  source: SourceRef | null;
 }
 
 interface OwnershipData {
@@ -77,9 +79,12 @@ export default function OwnershipView({ projectId }: { projectId: number }) {
           <div className="space-y-2 mb-8">
             {data!.owners.map((owner, idx) => (
               <div key={idx} className="border rounded-lg p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="font-semibold">{owner.name}</div>
-                  <div className="text-sm text-gray-600">{owner.percentage}%</div>
+                <div className="flex items-center justify-between mb-2 gap-4">
+                  <div className="font-semibold min-w-0 flex-1 truncate">{owner.name}</div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-sm text-gray-600">{owner.percentage}%</span>
+                    <SourceBadge source={owner.source} />
+                  </div>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-4">
                   <div

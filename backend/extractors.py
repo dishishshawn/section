@@ -48,6 +48,7 @@ class LeaseExtraction(BaseModel):
     continuous_drilling: Optional[str] = None
     recording_date: Optional[str] = None
     effective_date: Optional[str] = None
+    source_quotes: Optional[dict] = None
 
 
 class DeedExtraction(BaseModel):
@@ -61,6 +62,7 @@ class DeedExtraction(BaseModel):
     reservations: Optional[List[str]] = None
     date: Optional[str] = None
     recording_info: Optional[str] = None
+    source_quotes: Optional[dict] = None
 
 
 LEASE_PROMPT = """You are an expert oil & gas landman extracting structured data from a lease.
@@ -80,8 +82,21 @@ Return ONLY a JSON object with these keys (use null for missing fields):
   "shut_in": string,
   "continuous_drilling": string,
   "recording_date": string (YYYY-MM-DD),
-  "effective_date": string (YYYY-MM-DD)
+  "effective_date": string (YYYY-MM-DD),
+  "source_quotes": {
+    "lessor": string (VERBATIM excerpt from document supporting lessor, max 200 chars),
+    "lessee": string,
+    "legal_description": string,
+    "gross_acres": string,
+    "royalty": string,
+    "primary_term": string,
+    "effective_date": string
+  }
 }
+
+For source_quotes, return the exact text span from the document that supports each
+extracted field. Copy verbatim — do not paraphrase. This is for audit trail so a
+landman can verify against the source.
 
 Document:
 """
@@ -99,8 +114,18 @@ Return ONLY a JSON object with these keys (use null for missing fields):
   "mineral_estate": string,
   "reservations": [string],
   "date": string (YYYY-MM-DD),
-  "recording_info": string
+  "recording_info": string,
+  "source_quotes": {
+    "grantor": string (VERBATIM excerpt from document, max 200 chars),
+    "grantee": string,
+    "legal_description": string,
+    "interest_conveyed": string,
+    "date": string
+  }
 }
+
+For source_quotes, return the exact text span from the document that supports each
+extracted field. Copy verbatim — do not paraphrase.
 
 Document:
 """
@@ -385,6 +410,7 @@ def materialize_lease(db: Session, project_id: int, document_id: int, lease: Lea
             "bonus": lease.bonus,
             "pugh_clauses": lease.pugh_clauses,
             "depth_limits": lease.depth_limits,
+            "source_quotes": lease.source_quotes or {},
         },
     )
     db.add(inst)
@@ -453,6 +479,7 @@ def materialize_deed(db: Session, project_id: int, document_id: int, deed: DeedE
             "interest_conveyed": deed.interest_conveyed,
             "reservations": deed.reservations,
             "mineral_estate": deed.mineral_estate,
+            "source_quotes": deed.source_quotes or {},
         },
     ))
 
@@ -490,8 +517,17 @@ Return ONLY a JSON object with these keys (use null for missing):
   "legal_description": string,
   "interest_conveyed": string (e.g., "100% working interest"),
   "date": string (YYYY-MM-DD, the effective date),
-  "recording_info": string
+  "recording_info": string,
+  "source_quotes": {
+    "grantor": string (VERBATIM excerpt from document, max 200 chars),
+    "grantee": string,
+    "legal_description": string,
+    "date": string
+  }
 }
+
+For source_quotes, return the exact text span from the document that supports each
+extracted field. Copy verbatim — do not paraphrase.
 
 Document:
 """
@@ -521,6 +557,7 @@ def materialize_assignment(db: Session, project_id: int, document_id: int, assig
             "grantor": assignment.grantor,
             "grantee": assignment.grantee,
             "interest_conveyed": assignment.interest_conveyed,
+            "source_quotes": assignment.source_quotes or {},
         },
     ))
 

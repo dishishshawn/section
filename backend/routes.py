@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Backgro
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 import hashlib
 import uuid
@@ -133,6 +133,24 @@ async def upload_document(
         "extraction_status": "queued",
     }
 
+@router.get("/documents/{document_id}/file")
+def get_document_file(document_id: int, db: Session = Depends(get_db)):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    file_path = UPLOAD_DIR / doc.s3_key
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File missing on disk")
+    filename = Path(doc.s3_key).name
+    if "_" in filename:
+        filename = filename.split("_", 1)[1]
+    return FileResponse(
+        str(file_path),
+        media_type=doc.mime or "application/octet-stream",
+        filename=filename,
+    )
+
+
 @router.get("/projects/{project_id}/documents")
 def list_documents(project_id: int, db: Session = Depends(get_db)):
     docs = db.query(Document).filter(Document.project_id == project_id).order_by(Document.created_at.desc()).all()
@@ -179,16 +197,39 @@ def get_ownership(project_id: int, db: Session = Depends(get_db)):
     total_acres = sum(t.gross_acres or 0 for t in tracts)
     leased_acres = total_acres if lease_count > 0 else 0
 
+    # Build an index of party name → instrument(s) that mention them, for source tracing
+    project_instruments = db.query(Instrument).filter(Instrument.project_id == project_id).all()
+    party_to_instrument: dict[str, Instrument] = {}
+    for inst in project_instruments:
+        grantor, grantee = _instrument_parties(inst)
+        for name in (grantor, grantee):
+            if name and name not in party_to_instrument:
+                party_to_instrument[name] = inst
+
     owners = []
     for i in interests:
         denom = i.fraction_denominator or 1
         num = i.fraction_numerator or 0
         pct = round((num / denom) * 100, 2) if denom else 0
+        party_name = i.party.name if i.party else "Unknown"
+        source_inst = party_to_instrument.get(party_name)
+        # Pick the field whose quote is most relevant to establishing ownership
+        field = None
+        if source_inst:
+            data = source_inst.extracted_data if isinstance(source_inst.extracted_data, dict) else {}
+            grantor, grantee = _instrument_parties(source_inst)
+            if party_name == grantor:
+                field = "grantor" if "grantor" in (data.get("source_quotes") or {}) else "lessor"
+            else:
+                field = "grantee" if "grantee" in (data.get("source_quotes") or {}) else "lessee"
+        source = _source_for_instrument(source_inst, db, field) if source_inst else None
+
         owners.append({
-            "name": i.party.name if i.party else "Unknown",
+            "name": party_name,
             "fraction": f"{num}/{denom}",
             "percentage": pct,
             "mineral_estate": i.mineral_estate or "Unknown",
+            "source": source,
         })
 
     return {
@@ -214,6 +255,11 @@ def get_obligations(project_id: int, db: Session = Depends(get_db)):
     items = []
     for o in obligations:
         days_until = (o.due_date - now).days if o.due_date else 0
+        source = None
+        if o.instrument_id:
+            inst = db.query(Instrument).filter(Instrument.id == o.instrument_id).first()
+            field = "primary_term" if "term" in (o.type or "") else "continuous_drilling" if "drilling" in (o.type or "") else None
+            source = _source_for_instrument(inst, db, field)
         items.append({
             "id": o.id,
             "type": o.type or "Obligation",
@@ -221,6 +267,7 @@ def get_obligations(project_id: int, db: Session = Depends(get_db)):
             "days_until": days_until,
             "priority": priority_for(days_until),
             "description": (o.params or {}).get("description") if isinstance(o.params, dict) else str(o.params or ""),
+            "source": source,
         })
 
     return {"project_id": project_id, "obligations": items}
@@ -230,6 +277,23 @@ def _instrument_parties(inst: Instrument) -> tuple[str, str]:
     grantor = data.get("grantor") or data.get("lessor") or ""
     grantee = data.get("grantee") or data.get("lessee") or ""
     return grantor, grantee
+
+
+def _source_for_instrument(inst: Instrument, db: Session, field: str = None) -> Optional[dict]:
+    if not inst or not inst.source_document_id:
+        return None
+    doc = db.query(Document).filter(Document.id == inst.source_document_id).first()
+    if not doc:
+        return None
+    filename = doc.s3_key.split("_", 1)[-1] if "_" in (doc.s3_key or "") else (doc.s3_key or "")
+    data = inst.extracted_data if isinstance(inst.extracted_data, dict) else {}
+    quotes = data.get("source_quotes") or {}
+    quote = quotes.get(field) if field else None
+    return {
+        "document_id": doc.id,
+        "filename": filename,
+        "quote": quote,
+    }
 
 @router.get("/projects/{project_id}/runsheet")
 def get_runsheet(project_id: int, db: Session = Depends(get_db)):
@@ -254,12 +318,29 @@ def get_runsheet(project_id: int, db: Session = Depends(get_db)):
         else:
             status = "complete"
 
+        data = inst.extracted_data if isinstance(inst.extracted_data, dict) else {}
+        quotes = data.get("source_quotes") or {}
+        # For the runsheet row, pick the most representative quote (legal description or grantor)
+        best_quote = (
+            quotes.get("legal_description")
+            or quotes.get("grantor")
+            or quotes.get("lessor")
+            or None
+        )
+        source = None
+        if inst.source_document_id:
+            doc = db.query(Document).filter(Document.id == inst.source_document_id).first()
+            if doc:
+                filename = doc.s3_key.split("_", 1)[-1] if "_" in (doc.s3_key or "") else (doc.s3_key or "")
+                source = {"document_id": doc.id, "filename": filename, "quote": best_quote}
+
         chain.append({
             "instrument_type": (inst.type or "instrument").replace("_", " ").title(),
             "grantor": grantor or "Unknown",
             "grantee": grantee or "Unknown",
             "date": inst.recorded_at.isoformat()[:10] if inst.recorded_at else "",
             "status": status,
+            "source": source,
         })
 
     gaps = []

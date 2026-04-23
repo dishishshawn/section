@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import axios from "axios";
+import SourceBadge, { SourceRef } from "./SourceBadge";
 
 interface ChainItem {
   instrument_type: string;
@@ -9,6 +10,7 @@ interface ChainItem {
   grantee: string;
   date: string;
   status: "complete" | "missing" | "flagged";
+  source: SourceRef | null;
 }
 
 interface Gap {
@@ -75,13 +77,18 @@ export default function Runsheet({ projectId }: { projectId: number }) {
                       : "bg-green-50 border-green-300"
                 }`}
               >
-                <div className="font-semibold">{item.instrument_type}</div>
-                <div className="text-sm text-gray-600">
-                  {item.grantor} → {item.grantee}
+                <div className="flex justify-between items-start gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold">{item.instrument_type}</div>
+                    <div className="text-sm text-gray-600">
+                      {item.grantor} → {item.grantee}
+                    </div>
+                    <div className="text-xs text-gray-500">{item.date}</div>
+                    {item.status === "missing" && <div className="text-xs text-red-600 mt-2">Missing document</div>}
+                    {item.status === "flagged" && <div className="text-xs text-yellow-600 mt-2">Requires review</div>}
+                  </div>
+                  <SourceBadge source={item.source} />
                 </div>
-                <div className="text-xs text-gray-500">{item.date}</div>
-                {item.status === "missing" && <div className="text-xs text-red-600 mt-2">Missing document</div>}
-                {item.status === "flagged" && <div className="text-xs text-yellow-600 mt-2">Requires review</div>}
               </div>
             ))}
           </div>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import axios from "axios";
+import SourceBadge, { SourceRef } from "./SourceBadge";
 
 interface Obligation {
   id: number;
@@ -10,6 +11,7 @@ interface Obligation {
   days_until: number;
   priority: "high" | "medium" | "low";
   description: string;
+  source: SourceRef | null;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -65,12 +67,15 @@ export default function ObligationCalendar({ projectId }: { projectId: number })
       <div className="space-y-3">
         {items.map((obl) => (
           <div key={obl.id} className="bg-white p-3 rounded border-l-4 border-slate-500">
-            <div className="flex justify-between items-start">
-              <div>
+            <div className="flex justify-between items-start gap-4">
+              <div className="min-w-0 flex-1">
                 <div className="font-semibold">{formatType(obl.type)}</div>
                 <div className="text-sm text-gray-600">{obl.description}</div>
+                <div className="mt-1">
+                  <SourceBadge source={obl.source} />
+                </div>
               </div>
-              <div className="text-right">
+              <div className="text-right shrink-0">
                 <div className="text-sm font-bold">{obl.days_until} days</div>
                 <div className="text-xs text-gray-500">{obl.due_date?.slice(0, 10)}</div>
               </div>
