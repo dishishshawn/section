@@ -42,64 +42,112 @@ export default function OwnershipView({ projectId }: { projectId: number }) {
     fetchOwnership();
   }, [projectId]);
 
-  if (loading) return <div className="p-4">Loading ownership data...</div>;
-  if (error) return <div className="p-4 text-red-600">{error}</div>;
+  if (loading) {
+    return (
+      <div className="px-8 py-10 text-sm text-ink-3">
+        <span className="inline-block w-3 h-3 border-2 border-ink-3/30 border-t-ink rounded-full animate-spin mr-2 align-middle" />
+        Loading ownership data…
+      </div>
+    );
+  }
+  if (error) return <div className="px-8 py-10 text-sm text-danger">{error}</div>;
 
   const isEmpty = !data?.owners?.length;
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold mb-6">Ownership Position</h2>
+    <div className="px-8 py-10">
+      <div className="mb-8">
+        <div className="font-mono text-xs uppercase tracking-[0.18em] text-ink-3 mb-1.5">
+          03 — Ownership
+        </div>
+        <h2 className="font-display text-3xl font-semibold text-ink">Ownership position</h2>
+      </div>
 
       {isEmpty ? (
-        <div className="p-8 text-center border-2 border-dashed border-slate-300 rounded-lg">
-          <p className="text-slate-500 mb-2">No ownership data yet.</p>
-          <p className="text-sm text-slate-400">
+        <div className="rounded-xl border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
+          <div className="font-display text-lg text-ink mb-1">No ownership data yet</div>
+          <p className="text-sm text-ink-3 max-w-md mx-auto">
             Upload deeds in the Documents tab to establish fractional ownership.
           </p>
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-4 mb-8">
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="text-sm text-gray-600">Total Acres</div>
-              <div className="text-2xl font-bold">{data!.total_acres}</div>
-            </div>
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-              <div className="text-sm text-gray-600">Leased</div>
-              <div className="text-2xl font-bold">{data!.leased_acres} ac</div>
-            </div>
-            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <div className="text-sm text-gray-600">Open</div>
-              <div className="text-2xl font-bold">{data!.open_acres} ac</div>
-            </div>
+          <div className="grid grid-cols-3 gap-px bg-line rounded-xl overflow-hidden border border-line mb-10">
+            <Stat label="Total acres" value={data!.total_acres} suffix="ac" />
+            <Stat label="Leased" value={data!.leased_acres} suffix="ac" tone="positive" />
+            <Stat label="Open" value={data!.open_acres} suffix="ac" tone="warn" />
           </div>
 
-          <h3 className="text-lg font-bold mb-4">Fractional Ownership</h3>
-          <div className="space-y-2 mb-8">
+          <div className="flex items-baseline justify-between mb-4">
+            <h3 className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-3">
+              Fractional ownership
+            </h3>
+            <span className="text-xs text-ink-3 tabular">{data!.owners.length} parties</span>
+          </div>
+          <div className="space-y-2">
             {data!.owners.map((owner, idx) => (
-              <div key={idx} className="border rounded-lg p-3">
-                <div className="flex items-center justify-between mb-2 gap-4">
-                  <div className="font-semibold min-w-0 flex-1 truncate">{owner.name}</div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-sm text-gray-600">{owner.percentage}%</span>
-                    <SourceBadge source={owner.source} />
+              <div
+                key={idx}
+                className="rounded-xl border border-line bg-surface px-4 py-4 hover:border-line-strong transition-colors"
+              >
+                <div className="flex items-center justify-between mb-2.5 gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="flex-shrink-0 w-7 h-7 rounded-md bg-accent-tint text-accent-strong font-mono text-xs font-semibold flex items-center justify-center tabular">
+                      {String(idx + 1).padStart(2, "0")}
+                    </span>
+                    <span className="font-display font-semibold text-ink truncate">
+                      {owner.name}
+                    </span>
                   </div>
+                  <span className="font-mono text-sm tabular text-ink font-semibold shrink-0">
+                    {owner.percentage}%
+                  </span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-4">
+                <div className="relative w-full h-1.5 bg-line/60 rounded-full overflow-hidden">
                   <div
-                    className="bg-blue-500 h-4 rounded-full"
+                    className="absolute inset-y-0 left-0 bg-accent rounded-full transition-all"
                     style={{ width: `${Math.min(owner.percentage, 100)}%` }}
-                  ></div>
+                  />
                 </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {owner.fraction} - {owner.mineral_estate}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs text-ink-3 font-mono tabular min-w-0">
+                    <span>{owner.fraction}</span>
+                    <span className="text-line-strong">·</span>
+                    <span className="truncate">{owner.mineral_estate}</span>
+                  </div>
+                  <SourceBadge source={owner.source} />
                 </div>
               </div>
             ))}
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  suffix,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number;
+  suffix?: string;
+  tone?: "neutral" | "positive" | "warn";
+}) {
+  const valueColor =
+    tone === "positive" ? "text-positive" : tone === "warn" ? "text-warn" : "text-ink";
+  return (
+    <div className="bg-surface px-5 py-5">
+      <div className="text-[0.7rem] font-mono uppercase tracking-[0.16em] text-ink-3 mb-2">
+        {label}
+      </div>
+      <div className={`font-display text-3xl font-semibold tabular ${valueColor}`}>
+        {value}
+        {suffix && <span className="text-base text-ink-3 font-normal ml-1">{suffix}</span>}
+      </div>
     </div>
   );
 }
