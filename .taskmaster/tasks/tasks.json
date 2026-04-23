@@ -4,95 +4,182 @@
       {
         "id": 1,
         "title": "Human-in-the-loop fact editing + audit trail",
-        "description": "Every extracted fact (grantor, grantee, date, legal description, fractions, etc.) must be editable by a landman, and every override must be recorded with who changed it, when, from what value, to what value, and why. This converts Section from a demo into a system of record — without it, LLM extraction error (10–30% on deeds) makes the output legally unusable.",
-        "details": "Data model: new `fact_overrides` table keyed on (instrument_id or interest_id, field_name) with columns: old_value, new_value, user_id, user_display_name, changed_at, reason (optional free text). Resolved fact = latest override if present, else extracted value. Provenance layer: rendering helpers for chain rows, ownership rows, obligations, etc. must consult the override table and return both the effective value and an origin tag (`extracted` | `reviewed`). UI: inline edit control on every rendered fact — hover reveals a pencil; click opens a small editor with the original extracted value visible alongside the source quote so the landman can confirm against the recorded text. On save, SourceBadge is replaced by a 'Reviewed by {name} · {relative time}' badge that, on hover, reveals full audit (old → new, timestamp, reason). History drawer: per-project timeline of every override, filterable by document, field, or user. Backend: PATCH endpoints `/api/instruments/{id}/fields/{field}` and `/api/interests/{id}/fields/{field}` that write to fact_overrides and bust any cached derived views (runsheet, ownership, curative). Regenerate chain gaps and curative from resolved values, not raw extraction. Identity prerequisite: minimal auth — email magic link (Resend or SMTP) — so user_id is meaningful; audit without identity is theatre.",
-        "testStrategy": "1. Unit: override precedence (latest-wins, null overrides revert to extracted). 2. Integration: edit a grantor name on an instrument, reload runsheet, confirm the chain, curative gaps, and ownership all reflect the new value and that the source quote still points to the original document. 3. UI: edit a fact, verify the Reviewed badge replaces the source badge and audit popover shows old → new + timestamp + user. 4. Auth: sign out, confirm edit endpoints return 401. 5. Regression: re-running extraction on the same document does NOT overwrite a reviewed value.",
+        "description": "Every extracted fact (grantor, grantee, date, legal description, fractions, etc.) must be editable by a landman, and every override must be recorded with who changed it, when, from what value, to what value, and why. This converts Section from a demo into a system of record \u00e2\u20ac\u201d without it, LLM extraction error (10\u00e2\u20ac\u201c30% on deeds) makes the output legally unusable.",
+        "details": "Data model: new `fact_overrides` table keyed on (instrument_id or interest_id, field_name) with columns: old_value, new_value, user_id, user_display_name, changed_at, reason (optional free text). Resolved fact = latest override if present, else extracted value. Provenance layer: rendering helpers for chain rows, ownership rows, obligations, etc. must consult the override table and return both the effective value and an origin tag (`extracted` | `reviewed`). UI: inline edit control on every rendered fact \u00e2\u20ac\u201d hover reveals a pencil; click opens a small editor with the original extracted value visible alongside the source quote so the landman can confirm against the recorded text. On save, SourceBadge is replaced by a 'Reviewed by {name} \u00c2\u00b7 {relative time}' badge that, on hover, reveals full audit (old \u00e2\u2020\u2019 new, timestamp, reason). History drawer: per-project timeline of every override, filterable by document, field, or user. Backend: PATCH endpoints `/api/instruments/{id}/fields/{field}` and `/api/interests/{id}/fields/{field}` that write to fact_overrides and bust any cached derived views (runsheet, ownership, curative). Regenerate chain gaps and curative from resolved values, not raw extraction. Identity prerequisite: minimal auth \u00e2\u20ac\u201d email magic link (Resend or SMTP) \u00e2\u20ac\u201d so user_id is meaningful; audit without identity is theatre.",
+        "testStrategy": "1. Unit: override precedence (latest-wins, null overrides revert to extracted). 2. Integration: edit a grantor name on an instrument, reload runsheet, confirm the chain, curative gaps, and ownership all reflect the new value and that the source quote still points to the original document. 3. UI: edit a fact, verify the Reviewed badge replaces the source badge and audit popover shows old \u00e2\u2020\u2019 new + timestamp + user. 4. Auth: sign out, confirm edit endpoints return 401. 5. Regression: re-running extraction on the same document does NOT overwrite a reviewed value.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
             "title": "Minimal email magic-link auth",
             "description": "Add users table, magic-link endpoint, session cookie, auth dependency on write routes. No registration UI beyond 'enter email, get link'.",
-            "status": "in-progress"
+            "status": "done"
           },
           {
             "id": 2,
             "title": "fact_overrides schema + migration",
             "description": "SQLAlchemy model, Alembic migration, indexes on (entity_type, entity_id, field_name).",
-            "status": "pending"
+            "status": "done"
           },
           {
             "id": 3,
             "title": "Resolved-fact read layer",
             "description": "Helper that merges extracted_data with latest overrides. All runsheet/ownership/obligations routes must route through it.",
-            "status": "pending"
+            "status": "done"
           },
           {
             "id": 4,
             "title": "PATCH endpoints for field overrides",
             "description": "One endpoint per entity type (instrument, interest, party). Validates field name against allowlist. Writes override row, returns resolved entity.",
-            "status": "pending"
+            "status": "done"
           },
           {
             "id": 5,
             "title": "Inline edit UI component",
             "description": "Reusable <EditableFact> wrapping any rendered fact. Shows source quote + extracted value while editing; optimistic update on save.",
-            "status": "pending"
+            "status": "done"
           },
           {
             "id": 6,
             "title": "Reviewed badge + audit popover",
-            "description": "Replaces SourceBadge when override exists. Popover shows extracted → current, user, timestamp, reason.",
-            "status": "pending"
+            "description": "Replaces SourceBadge when override exists. Popover shows extracted \u00e2\u2020\u2019 current, user, timestamp, reason.",
+            "status": "done"
           },
           {
             "id": 7,
             "title": "Project-level audit history drawer",
             "description": "Chronological list of every override on the project, filterable by field, document, user. Exportable as CSV for compliance.",
-            "status": "pending"
+            "status": "done"
           }
         ]
       },
       {
         "id": 2,
         "title": "Exportable client deliverables (PDF title opinion, runsheet, stipulations memo)",
-        "description": "Landmen deliver documents — PDFs attached to email — not dashboards. An OwnershipReportGenerator already exists (backend/exports.py wired at routes.py:464). Expand to three artifacts: (1) title opinion, (2) full runsheet with chain + curative, (3) stipulations/obligations memo. Each must carry the full provenance chain so the recipient can trust the numbers.",
-        "details": "Reuse OwnershipReportGenerator pattern. Templates: pdf renderer (ReportLab or WeasyPrint — check what's already installed) with firm-letterhead shell, typography aligned to the existing newspaper/register visual language. Every fact on the PDF carries a tiny superscript cite keyed to a back-page source appendix listing document name, page, and exact quote. Include a 'reviewed by' column where overrides exist (depends on Task 1). Endpoints: `GET /api/projects/{id}/export/title-opinion.pdf`, `.../runsheet.pdf`, `.../stipulations.pdf`. UI: export menu on project detail toolbar; downloads stream directly.",
-        "testStrategy": "1. Generate each PDF for a project with known chain, gaps, and reviewed overrides — visually inspect formatting, page breaks, source appendix. 2. Confirm every fact's superscript resolves to an appendix entry. 3. Confirm reviewed overrides surface 'Reviewed by' markers. 4. Byte-level: re-running export produces a deterministic PDF for the same input.",
+        "description": "Landmen deliver documents \u00e2\u20ac\u201d PDFs attached to email \u00e2\u20ac\u201d not dashboards. An OwnershipReportGenerator already exists (backend/exports.py wired at routes.py:464). Expand to three artifacts: (1) title opinion, (2) full runsheet with chain + curative, (3) stipulations/obligations memo. Each must carry the full provenance chain so the recipient can trust the numbers.",
+        "details": "Reuse OwnershipReportGenerator pattern. Templates: pdf renderer (ReportLab or WeasyPrint \u00e2\u20ac\u201d check what's already installed) with firm-letterhead shell, typography aligned to the existing newspaper/register visual language. Every fact on the PDF carries a tiny superscript cite keyed to a back-page source appendix listing document name, page, and exact quote. Include a 'reviewed by' column where overrides exist (depends on Task 1). Endpoints: `GET /api/projects/{id}/export/title-opinion.pdf`, `.../runsheet.pdf`, `.../stipulations.pdf`. UI: export menu on project detail toolbar; downloads stream directly.",
+        "testStrategy": "1. Generate each PDF for a project with known chain, gaps, and reviewed overrides \u00e2\u20ac\u201d visually inspect formatting, page breaks, source appendix. 2. Confirm every fact's superscript resolves to an appendix entry. 3. Confirm reviewed overrides surface 'Reviewed by' markers. 4. Byte-level: re-running export produces a deterministic PDF for the same input.",
         "priority": "high",
-        "dependencies": [1],
-        "status": "pending",
+        "dependencies": [
+          1
+        ],
+        "status": "done",
         "subtasks": []
       },
       {
         "id": 3,
         "title": "Section-Township-Range map / tract view",
-        "description": "Landmen navigate by legal description (Section 14, T12N, R5W) not by list position. A tract view that renders the PLSS grid, highlights the subject tract, and overlays leased vs open acreage lets the landman orient at a glance and spot coverage gaps. Significantly deeper scope than features 1 and 2 — treat as a multi-week initiative that pulls Section toward workflow SaaS.",
-        "details": "Tile source: BLM/USGS PLSS cadastral tiles (public) or a simplified SVG synthesis from STR strings already parsed in legal descriptions. Start with SVG from parsed STR to avoid a tile server. Render: 6×6 section grid per township, highlight subject section, shade leased/held acreage vs open. Click a section to open its instruments. Eventual: multi-tract projects with coverage heatmap. Risk: legal descriptions in recorded documents are messy — need a robust STR parser as a prerequisite (partial metes-and-bounds descriptions, Indian lands, non-PLSS states like TX which uses abstracts).",
+        "description": "Landmen navigate by legal description (Section 14, T12N, R5W) not by list position. A tract view that renders the PLSS grid, highlights the subject tract, and overlays leased vs open acreage lets the landman orient at a glance and spot coverage gaps. Significantly deeper scope than features 1 and 2 \u00e2\u20ac\u201d treat as a multi-week initiative that pulls Section toward workflow SaaS.",
+        "details": "Tile source: BLM/USGS PLSS cadastral tiles (public) or a simplified SVG synthesis from STR strings already parsed in legal descriptions. Start with SVG from parsed STR to avoid a tile server. Render: 6\u00c3\u20146 section grid per township, highlight subject section, shade leased/held acreage vs open. Click a section to open its instruments. Eventual: multi-tract projects with coverage heatmap. Risk: legal descriptions in recorded documents are messy \u00e2\u20ac\u201d need a robust STR parser as a prerequisite (partial metes-and-bounds descriptions, Indian lands, non-PLSS states like TX which uses abstracts).",
         "testStrategy": "1. STR parser unit tests against 20+ real legal descriptions from sample deeds including Oklahoma aliquot parts, Texas abstracts (expected to fail gracefully), and lot/block descriptions. 2. Render test: a project with two tracts in the same township shows both highlighted. 3. Click-through: clicking a section opens its instrument list filtered correctly.",
         "priority": "medium",
-        "dependencies": [1],
-        "status": "pending",
-        "subtasks": []
+        "dependencies": [
+          1
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "STR parser",
+            "description": "Regex-based PLSS parser in backend/str_parser.py. Handles Oklahoma aliquot parts, Texas abstracts, lot/block, metes-and-bounds with graceful fallbacks.",
+            "status": "done"
+          },
+          {
+            "id": 2,
+            "title": "Tract map API endpoint",
+            "description": "GET /api/projects/{id}/tract-map \u00e2\u20ac\u201d parses legal descriptions for all tracts, builds township index with section grid positions, leased/open status, and instruments per section.",
+            "status": "done"
+          },
+          {
+            "id": 3,
+            "title": "TractMap frontend component",
+            "description": "SVG 6x6 PLSS section grid per township, aliquot shading (leased=moss, open=rust), click-to-drill section detail panel with instrument list. Non-PLSS tracts listed separately.",
+            "status": "done"
+          },
+          {
+            "id": 4,
+            "title": "Tract map tab in ProjectDetail",
+            "description": "Added 'Tract map' tab between Ownership and Obligations in the project navigation bar.",
+            "status": "done"
+          }
+        ]
       },
       {
         "id": 4,
         "title": "Multi-user workspaces with per-project permissions",
-        "description": "A landman shop has an owner, senior landmen, junior landmen, and occasionally clients. Per-project roles (owner / editor / viewer) let teams collaborate without stepping on each other and let clients view without editing. This shifts Section from single-user tool to team SaaS — adds billing, onboarding, and role UX surface area. Do last, only after 1–3 prove the product is worth the support burden.",
-        "details": "Data model: organizations, memberships (user × org × role), project_access (user × project × role). Row-level authorization on every read and write route. Invite flow: owner invites email → magic link → landed in the org. UI: org switcher in masthead, share menu on project, member list page. Billing: Stripe — per-seat pricing keyed on organization membership count. Audit trail from Task 1 now names the acting user within an org context.",
+        "description": "A landman shop has an owner, senior landmen, junior landmen, and occasionally clients. Per-project roles (owner / editor / viewer) let teams collaborate without stepping on each other and let clients view without editing. This shifts Section from single-user tool to team SaaS \u00e2\u20ac\u201d adds billing, onboarding, and role UX surface area. Do last, only after 1\u00e2\u20ac\u201c3 prove the product is worth the support burden.",
+        "details": "Data model: organizations, memberships (user \u00c3\u2014 org \u00c3\u2014 role), project_access (user \u00c3\u2014 project \u00c3\u2014 role). Row-level authorization on every read and write route. Invite flow: owner invites email \u00e2\u2020\u2019 magic link \u00e2\u2020\u2019 landed in the org. UI: org switcher in masthead, share menu on project, member list page. Billing: Stripe \u00e2\u20ac\u201d per-seat pricing keyed on organization membership count. Audit trail from Task 1 now names the acting user within an org context.",
         "testStrategy": "1. Auth: a viewer cannot PATCH fact overrides (403). 2. Isolation: projects in org A are invisible to users in org B. 3. Invite: full flow from owner to new member seeing the project. 4. Billing: adding a member increments the Stripe subscription quantity; removing a member decrements at next cycle.",
         "priority": "low",
-        "dependencies": [1, 2],
-        "status": "pending",
-        "subtasks": []
+        "dependencies": [
+          1,
+          2
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Data model: organizations, memberships, project_access, invites",
+            "description": "SQLAlchemy models for Organization, OrgMembership, ProjectAccess, OrgInvite. Inline migrations in main.py. Added org_id and created_by to projects table.",
+            "status": "done"
+          },
+          {
+            "id": 2,
+            "title": "Row-level authorization on all routes",
+            "description": "Effective project role helper (_effective_project_role) filters project list, document access, runsheet, ownership, obligations, risk, exports, and fact-override PATCH endpoints. Viewers get 403 on write, 404 on inaccessible projects.",
+            "status": "done"
+          },
+          {
+            "id": 3,
+            "title": "Org management + invite flow API",
+            "description": "org_routes.py: create/list/get orgs, list/update/remove members, create and accept invite tokens. Emails via Resend with console fallback in dev. Stripe seat-count sync on member add/remove.",
+            "status": "done"
+          },
+          {
+            "id": 4,
+            "title": "Stripe billing routes",
+            "description": "billing_routes.py: Checkout session creation (per-seat), Stripe webhook handler syncing billing_status and seat quantity. GET billing status endpoint.",
+            "status": "done"
+          },
+          {
+            "id": 5,
+            "title": "OrgSwitcher UI component",
+            "description": "Dropdown in masthead: lists workspaces, shows role badge, allows creating new org. Auto-selects first org. Wired into ProjectShell to re-fetch projects on org switch.",
+            "status": "done"
+          },
+          {
+            "id": 6,
+            "title": "ShareMenu UI component",
+            "description": "Share button on project detail header: shows members with access, lets owner update/revoke roles, tab to send invite email with org+project role combo.",
+            "status": "done"
+          },
+          {
+            "id": 7,
+            "title": "MembersPage UI component",
+            "description": "Full members management page: member list with roles, invite form with dev link echo, billing seat count display. Accessible from masthead Members link.",
+            "status": "done"
+          },
+          {
+            "id": 8,
+            "title": "Invite accept page",
+            "description": "Next.js route at /invite/[token]: shows org name + role, handles sign-in gating with sessionStorage handoff, calls POST /orgs/invites/{token}/accept.",
+            "status": "done"
+          },
+          {
+            "id": 9,
+            "title": "Audit trail org context",
+            "description": "Audit log GET now requires project viewer access. Override PATCH endpoints verify editor/owner role. user_display on FactOverride records the acting user email or display name within org context.",
+            "status": "done"
+          }
+        ]
       }
     ],
     "metadata": {
       "created": "2026-04-23T20:30:00.000Z",
       "updated": "2026-04-23T20:30:00.000Z",
-      "description": "Section product roadmap — post-demo path to system-of-record. Task 1 (fact editing + audit) is load-bearing; everything else depends on it because every downstream artifact (PDFs, maps, multi-user) inherits trust from reviewed facts."
+      "description": "Section product roadmap \u00e2\u20ac\u201d post-demo path to system-of-record. Task 1 (fact editing + audit) is load-bearing; everything else depends on it because every downstream artifact (PDFs, maps, multi-user) inherits trust from reviewed facts."
     }
   }
 }

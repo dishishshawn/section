@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
@@ -9,20 +9,108 @@ import uuid
 import os
 from datetime import datetime
 from database import get_db, SessionLocal
-from models import Project, Document, Tract, Party, Instrument, Interest, Obligation
+from models import Project, Document, Tract, Party, Instrument, Interest, Obligation, OrgMembership, ProjectAccess, User
 from pydantic import BaseModel
-from exports import OwnershipReportGenerator
+from exports import OwnershipReportGenerator, RunsheetGenerator, TitleOpinionGenerator, StipulationsGenerator
 from extractors import process_document
+from facts import resolved_data, get_provenance
+from str_parser import parse_legal_description, parsed_to_dict, section_grid_position
+from auth import get_current_user
 
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 router = APIRouter(prefix="/api", tags=["api"])
 
+# ---------------------------------------------------------------------------
+# Row-level authorization helpers (imported here to avoid circular imports)
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROLE_RANK = {"owner": 3, "editor": 2, "viewer": 1}
+_ORG_ROLE_RANK = {"owner": 3, "admin": 2, "member": 1}
+
+
+def _effective_project_role(db: Session, user: User, project_id: int) -> str | None:
+    """Return the caller's effective role on the project, or None if no access."""
+    pa = (
+        db.query(ProjectAccess)
+        .filter(
+            ProjectAccess.user_id == user.id,
+            ProjectAccess.project_id == project_id,
+        )
+        .first()
+    )
+    if pa:
+        return pa.role
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project or not project.org_id:
+        # Legacy projects without org: allow creator through
+        if project and project.created_by == user.id:
+            return "owner"
+        return None
+    m = (
+        db.query(OrgMembership)
+        .filter(OrgMembership.user_id == user.id, OrgMembership.org_id == project.org_id)
+        .first()
+    )
+    if not m:
+        return None
+    if m.role in ("owner", "admin"):
+        return "editor"
+    return "viewer"
+
+
+def _require_project_role(db: Session, user: User, project_id: int, min_role: str = "viewer"):
+    role = _effective_project_role(db, user, project_id)
+    if role is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if _PROJECT_ROLE_RANK.get(role, 0) < _PROJECT_ROLE_RANK.get(min_role, 0):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Requires '{min_role}' access on this project",
+        )
+    return role
+
+
+def _user_accessible_project_ids(db: Session, user: User) -> list[int]:
+    """Return all project IDs the user can see."""
+    # Projects via explicit ProjectAccess
+    explicit_ids = [
+        r[0]
+        for r in db.query(ProjectAccess.project_id)
+        .filter(ProjectAccess.user_id == user.id)
+        .all()
+    ]
+
+    # Projects in orgs the user belongs to
+    org_ids = [
+        r[0]
+        for r in db.query(OrgMembership.org_id)
+        .filter(OrgMembership.user_id == user.id)
+        .all()
+    ]
+    org_project_ids = [
+        r[0]
+        for r in db.query(Project.id)
+        .filter(Project.org_id.in_(org_ids))
+        .all()
+    ] if org_ids else []
+
+    # Projects the user created (legacy, no org)
+    created_ids = [
+        r[0]
+        for r in db.query(Project.id)
+        .filter(Project.created_by == user.id)
+        .all()
+    ]
+
+    return list(set(explicit_ids + org_project_ids + created_ids))
+
 class ProjectCreate(BaseModel):
     name: str
     jurisdiction: str
     owner_org: str = None
+    org_id: int | None = None
 
 class ProjectResponse(BaseModel):
     model_config = {"from_attributes": True}
@@ -33,28 +121,63 @@ class ProjectResponse(BaseModel):
     created_at: str
 
 @router.post("/projects")
-def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
+def create_project(
+    project: ProjectCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    # If org_id supplied, verify membership
+    if project.org_id:
+        m = db.query(OrgMembership).filter(
+            OrgMembership.user_id == user.id,
+            OrgMembership.org_id == project.org_id,
+        ).first()
+        if not m or _ORG_ROLE_RANK.get(m.role, 0) < _ORG_ROLE_RANK.get("member", 0):
+            raise HTTPException(status_code=403, detail="Not a member of that organization")
+
     db_project = Project(
         name=project.name,
         jurisdiction=project.jurisdiction,
-        owner_org=project.owner_org
+        owner_org=project.owner_org,
+        org_id=project.org_id,
+        created_by=user.id,
     )
     db.add(db_project)
+    db.flush()
+
+    # Grant creator explicit owner access on the project
+    pa = ProjectAccess(
+        user_id=user.id,
+        project_id=db_project.id,
+        org_id=project.org_id or 0,
+        role="owner",
+        granted_by=user.id,
+    )
+    db.add(pa)
     db.commit()
     db.refresh(db_project)
-    return {"id": db_project.id, "name": db_project.name, "jurisdiction": db_project.jurisdiction, "created_at": db_project.created_at.isoformat()}
+    return {"id": db_project.id, "name": db_project.name, "jurisdiction": db_project.jurisdiction, "created_at": db_project.created_at.isoformat(), "your_role": "owner"}
 
 @router.get("/projects/{project_id}")
-def get_project(project_id: int, db: Session = Depends(get_db)):
+def get_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    role = _require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return {"id": project.id, "name": project.name, "jurisdiction": project.jurisdiction, "created_at": project.created_at.isoformat()}
+    return {"id": project.id, "name": project.name, "jurisdiction": project.jurisdiction, "created_at": project.created_at.isoformat(), "your_role": role}
 
 @router.get("/projects")
-def list_projects(db: Session = Depends(get_db)):
+def list_projects(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     try:
-        projects = db.query(Project).all()
+        accessible_ids = _user_accessible_project_ids(db, user)
+        if not accessible_ids:
+            return []
+        projects = db.query(Project).filter(Project.id.in_(accessible_ids)).all()
         return [{"id": p.id, "name": p.name, "jurisdiction": p.jurisdiction, "created_at": p.created_at.isoformat()} for p in projects]
     except Exception as e:
         import traceback
@@ -80,7 +203,9 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
+    _require_project_role(db, user, project_id, "editor")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -134,10 +259,15 @@ async def upload_document(
     }
 
 @router.get("/documents/{document_id}/file")
-def get_document_file(document_id: int, db: Session = Depends(get_db)):
+def get_document_file(
+    document_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    _require_project_role(db, user, doc.project_id, "viewer")
     file_path = UPLOAD_DIR / doc.s3_key
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File missing on disk")
@@ -152,7 +282,12 @@ def get_document_file(document_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/projects/{project_id}/documents")
-def list_documents(project_id: int, db: Session = Depends(get_db)):
+def list_documents(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
     docs = db.query(Document).filter(Document.project_id == project_id).order_by(Document.created_at.desc()).all()
     return [
         {
@@ -168,7 +303,13 @@ def list_documents(project_id: int, db: Session = Depends(get_db)):
     ]
 
 @router.post("/projects/{project_id}/extract")
-def extract_document(project_id: int, document_id: int, db: Session = Depends(get_db)):
+def extract_document(
+    project_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "editor")
     doc = db.query(Document).filter(
         Document.id == document_id,
         Document.project_id == project_id
@@ -182,7 +323,12 @@ def extract_document(project_id: int, document_id: int, db: Session = Depends(ge
     return {"status": "extraction_started", "document_id": document_id}
 
 @router.get("/projects/{project_id}/ownership")
-def get_ownership(project_id: int, db: Session = Depends(get_db)):
+def get_ownership(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -201,7 +347,7 @@ def get_ownership(project_id: int, db: Session = Depends(get_db)):
     project_instruments = db.query(Instrument).filter(Instrument.project_id == project_id).all()
     party_to_instrument: dict[str, Instrument] = {}
     for inst in project_instruments:
-        grantor, grantee = _instrument_parties(inst)
+        grantor, grantee = _instrument_parties(inst, db)
         for name in (grantor, grantee):
             if name and name not in party_to_instrument:
                 party_to_instrument[name] = inst
@@ -211,13 +357,29 @@ def get_ownership(project_id: int, db: Session = Depends(get_db)):
         denom = i.fraction_denominator or 1
         num = i.fraction_numerator or 0
         pct = round((num / denom) * 100, 2) if denom else 0
-        party_name = i.party.name if i.party else "Unknown"
-        source_inst = party_to_instrument.get(party_name)
-        # Pick the field whose quote is most relevant to establishing ownership
+
+        # Resolve party name through overrides
+        party = i.party
+        raw_party_name = party.name if party else "Unknown"
+        party_resolved = resolved_data(db, "party", party.id, {"name": party.name, "type": party.type}) if party else {}
+        party_name = party_resolved.get("name") or raw_party_name
+        party_reviewed = party_resolved.get("_reviewed_fields") or {}
+
+        # Resolve interest fields through overrides
+        interest_base = {
+            "fraction_numerator": str(i.fraction_numerator),
+            "fraction_denominator": str(i.fraction_denominator),
+            "mineral_estate": i.mineral_estate or "Unknown",
+        }
+        interest_resolved = resolved_data(db, "interest", i.id, interest_base)
+        interest_reviewed = interest_resolved.get("_reviewed_fields") or {}
+        mineral_estate = interest_resolved.get("mineral_estate") or "Unknown"
+
+        source_inst = party_to_instrument.get(raw_party_name) or party_to_instrument.get(party_name)
         field = None
         if source_inst:
-            data = source_inst.extracted_data if isinstance(source_inst.extracted_data, dict) else {}
-            grantor, grantee = _instrument_parties(source_inst)
+            data = resolved_data(db, "instrument", source_inst.id, source_inst.extracted_data)
+            grantor, grantee = _instrument_parties(source_inst, db)
             if party_name == grantor:
                 field = "grantor" if "grantor" in (data.get("source_quotes") or {}) else "lessor"
             else:
@@ -225,11 +387,14 @@ def get_ownership(project_id: int, db: Session = Depends(get_db)):
         source = _source_for_instrument(source_inst, db, field) if source_inst else None
 
         owners.append({
+            "party_id": party.id if party else None,
+            "interest_id": i.id,
             "name": party_name,
             "fraction": f"{num}/{denom}",
             "percentage": pct,
-            "mineral_estate": i.mineral_estate or "Unknown",
+            "mineral_estate": mineral_estate,
             "source": source,
+            "reviewed": {**party_reviewed, **interest_reviewed},
         })
 
     return {
@@ -241,7 +406,12 @@ def get_ownership(project_id: int, db: Session = Depends(get_db)):
     }
 
 @router.get("/projects/{project_id}/obligations")
-def get_obligations(project_id: int, db: Session = Depends(get_db)):
+def get_obligations(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
     obligations = db.query(Obligation).filter(Obligation.project_id == project_id).all()
     now = datetime.utcnow()
 
@@ -260,20 +430,28 @@ def get_obligations(project_id: int, db: Session = Depends(get_db)):
             inst = db.query(Instrument).filter(Instrument.id == o.instrument_id).first()
             field = "primary_term" if "term" in (o.type or "") else "continuous_drilling" if "drilling" in (o.type or "") else None
             source = _source_for_instrument(inst, db, field)
+
+        params = o.params if isinstance(o.params, dict) else {}
+        raw_description = params.get("description") or str(o.params or "")
+        obl_base = {"description": raw_description, "type": o.type or "Obligation"}
+        obl_resolved = resolved_data(db, "obligation", o.id, obl_base)
+        obl_reviewed = obl_resolved.get("_reviewed_fields") or {}
+
         items.append({
             "id": o.id,
-            "type": o.type or "Obligation",
+            "type": obl_resolved.get("type") or "Obligation",
             "due_date": o.due_date.isoformat() if o.due_date else None,
             "days_until": days_until,
             "priority": priority_for(days_until),
-            "description": (o.params or {}).get("description") if isinstance(o.params, dict) else str(o.params or ""),
+            "description": obl_resolved.get("description") or "",
             "source": source,
+            "reviewed": obl_reviewed,
         })
 
     return {"project_id": project_id, "obligations": items}
 
-def _instrument_parties(inst: Instrument) -> tuple[str, str]:
-    data = inst.extracted_data if isinstance(inst.extracted_data, dict) else {}
+def _instrument_parties(inst: Instrument, db: Session) -> tuple[str, str]:
+    data = resolved_data(db, "instrument", inst.id, inst.extracted_data)
     grantor = data.get("grantor") or data.get("lessor") or ""
     grantee = data.get("grantee") or data.get("lessee") or ""
     return grantor, grantee
@@ -296,7 +474,12 @@ def _source_for_instrument(inst: Instrument, db: Session, field: str = None) -> 
     }
 
 @router.get("/projects/{project_id}/runsheet")
-def get_runsheet(project_id: int, db: Session = Depends(get_db)):
+def get_runsheet(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -310,7 +493,7 @@ def get_runsheet(project_id: int, db: Session = Depends(get_db)):
 
     chain = []
     for inst in instruments:
-        grantor, grantee = _instrument_parties(inst)
+        grantor, grantee = _instrument_parties(inst, db)
         if not grantor or not grantee:
             status = "missing"
         elif "unknown" in grantor.lower() or "unknown" in grantee.lower():
@@ -318,7 +501,7 @@ def get_runsheet(project_id: int, db: Session = Depends(get_db)):
         else:
             status = "complete"
 
-        data = inst.extracted_data if isinstance(inst.extracted_data, dict) else {}
+        data = resolved_data(db, "instrument", inst.id, inst.extracted_data)
         quotes = data.get("source_quotes") or {}
         # For the runsheet row, pick the most representative quote (legal description or grantor)
         best_quote = (
@@ -334,13 +517,16 @@ def get_runsheet(project_id: int, db: Session = Depends(get_db)):
                 filename = doc.s3_key.split("_", 1)[-1] if "_" in (doc.s3_key or "") else (doc.s3_key or "")
                 source = {"document_id": doc.id, "filename": filename, "quote": best_quote}
 
+        reviewed = data.get("_reviewed_fields") or {}
         chain.append({
+            "instrument_id": inst.id,
             "instrument_type": (inst.type or "instrument").replace("_", " ").title(),
             "grantor": grantor or "Unknown",
             "grantee": grantee or "Unknown",
             "date": inst.recorded_at.isoformat()[:10] if inst.recorded_at else "",
             "status": status,
             "source": source,
+            "reviewed": reviewed,
         })
 
     gaps = []
@@ -363,7 +549,12 @@ def get_runsheet(project_id: int, db: Session = Depends(get_db)):
     return {"project_id": project_id, "chain": chain, "gaps": gaps}
 
 @router.get("/projects/{project_id}/risk")
-def get_risk(project_id: int, db: Session = Depends(get_db)):
+def get_risk(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -403,7 +594,7 @@ def get_risk(project_id: int, db: Session = Depends(get_db)):
     flagged = []
     idx = 1
     for inst in instruments:
-        grantor, grantee = _instrument_parties(inst)
+        grantor, grantee = _instrument_parties(inst, db)
         if "unknown" in (grantor + " " + grantee).lower():
             flagged.append({
                 "id": idx,
@@ -437,40 +628,260 @@ def get_risk(project_id: int, db: Session = Depends(get_db)):
     }
 
 @router.get("/projects/{project_id}/export/ownership")
-def export_ownership_report(project_id: int, db: Session = Depends(get_db)):
+def export_ownership_report(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    tracts = db.query(Tract).filter(Tract.project_id == project_id).all()
     interests = db.query(Interest).join(Tract).filter(Tract.project_id == project_id).all()
+    lease_count = db.query(Instrument).filter(
+        Instrument.project_id == project_id,
+        Instrument.type == "lease",
+    ).count()
+
+    total_acres = sum(t.gross_acres or 0 for t in tracts)
+    leased_acres = total_acres if lease_count > 0 else 0
+
+    owners = []
+    for i in interests:
+        denom = i.fraction_denominator or 1
+        num = i.fraction_numerator or 0
+        party = i.party
+        party_base = {"name": party.name, "type": party.type} if party else {}
+        party_resolved = resolved_data(db, "party", party.id, party_base) if party else {}
+        party_name = party_resolved.get("name") or (party.name if party else "Unknown")
+
+        interest_base = {"mineral_estate": i.mineral_estate or "", "burdens": str(i.burdens or "None")}
+        interest_resolved = resolved_data(db, "interest", i.id, interest_base)
+
+        owners.append({
+            "name": party_name,
+            "fraction": f"{num}/{denom}",
+            "percentage": round((num / denom) * 100, 2) if denom else 0,
+            "mineral_estate": interest_resolved.get("mineral_estate") or "Unknown",
+            "burdens": interest_resolved.get("burdens") or "None",
+        })
 
     ownership_data = {
         "project_id": project_id,
-        "owners": [
-            {
-                "name": i.party.name if i.party else "Unknown",
-                "fraction": f"{i.fraction_numerator}/{i.fraction_denominator}",
-                "percentage": round((i.fraction_numerator / i.fraction_denominator) * 100, 2),
-                "mineral_estate": i.mineral_estate,
-                "burdens": i.burdens if i.burdens else "None",
-            }
-            for i in interests
-        ],
-        "total_acres": 640,
-        "leased_acres": 480,
-        "open_acres": 160,
+        "owners": owners,
+        "total_acres": total_acres,
+        "leased_acres": leased_acres,
+        "open_acres": max(total_acres - leased_acres, 0),
     }
 
     pdf_buffer = OwnershipReportGenerator.generate_pdf(project.name, project.jurisdiction, ownership_data)
 
-    return FileResponse(
-        iter(pdf_buffer),
+    return StreamingResponse(
+        pdf_buffer,
         media_type="application/pdf",
-        filename=f"{project.name}_Ownership_Report.pdf"
+        headers={"Content-Disposition": f'attachment; filename="{project.name}_Ownership_Report.pdf"'},
     )
 
+
+@router.get("/projects/{project_id}/export/runsheet")
+def export_runsheet(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    runsheet_data = get_runsheet(project_id, db, user)
+    pdf_buffer = RunsheetGenerator.generate_pdf(project.name, project.jurisdiction, runsheet_data)
+    return StreamingResponse(
+        pdf_buffer, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{project.name}_Runsheet.pdf"'},
+    )
+
+
+@router.get("/projects/{project_id}/export/title-opinion")
+def export_title_opinion(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    runsheet_data = get_runsheet(project_id, db, user)
+    ownership_data = get_ownership(project_id, db, user)
+    pdf_buffer = TitleOpinionGenerator.generate_pdf(
+        project.name, project.jurisdiction, runsheet_data, ownership_data)
+    return StreamingResponse(
+        pdf_buffer, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{project.name}_Title_Opinion.pdf"'},
+    )
+
+
+@router.get("/projects/{project_id}/export/stipulations")
+def export_stipulations(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "viewer")
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    obligations_data = get_obligations(project_id, db, user)
+    pdf_buffer = StipulationsGenerator.generate_pdf(
+        project.name, project.jurisdiction, obligations_data)
+    return StreamingResponse(
+        pdf_buffer, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{project.name}_Stipulations.pdf"'},
+    )
+
+
+@router.get("/projects/{project_id}/tract-map")
+def get_tract_map(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Return PLSS grid data for all tracts in a project.
+    Each tract gets its legal description parsed, yielding section grid position,
+    aliquot coverage, and the instruments recorded against that section.
+    """
+    _require_project_role(db, user, project_id, "viewer")
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    tracts = db.query(Tract).filter(Tract.project_id == project_id).all()
+    instruments = db.query(Instrument).filter(Instrument.project_id == project_id).all()
+
+    def _norm_ld(s: str) -> str:
+        """Normalize a legal description for matching: lowercase, collapsed whitespace."""
+        return " ".join((s or "").lower().split())
+
+    # Determine leased status per tract via instruments
+    leased_legal_descs: set[str] = set()
+    for inst in instruments:
+        if (inst.type or "").lower() == "lease":
+            data = inst.extracted_data if isinstance(inst.extracted_data, dict) else {}
+            ld = data.get("legal_description")
+            if ld:
+                leased_legal_descs.add(_norm_ld(ld))
+
+    parsed_tracts = []
+    township_index: dict[str, dict] = {}  # key: "T{n}{dir} R{n}{dir}"
+
+    for tract in tracts:
+        parsed = parse_legal_description(tract.legal_description or "")
+        parsed_dict = parsed_to_dict(parsed)
+
+        # Find instruments for this tract
+        tract_instruments = []
+        for inst in instruments:
+            data = inst.extracted_data if isinstance(inst.extracted_data, dict) else {}
+            ld = data.get("legal_description") or ""
+            if ld and _norm_ld(ld) == _norm_ld(tract.legal_description or ""):
+                resolved = resolved_data(db, "instrument", inst.id, data)
+                grantor = resolved.get("grantor") or resolved.get("lessor") or ""
+                grantee = resolved.get("grantee") or resolved.get("lessee") or ""
+                doc = None
+                if inst.source_document_id:
+                    d = db.query(Document).filter(Document.id == inst.source_document_id).first()
+                    if d:
+                        fn = d.s3_key.split("_", 1)[-1] if "_" in (d.s3_key or "") else (d.s3_key or "")
+                        doc = {"id": d.id, "filename": fn}
+                tract_instruments.append({
+                    "instrument_id": inst.id,
+                    "instrument_type": (inst.type or "instrument").replace("_", " ").title(),
+                    "grantor": grantor,
+                    "grantee": grantee,
+                    "date": inst.recorded_at.isoformat()[:10] if inst.recorded_at else None,
+                    "document": doc,
+                })
+
+        is_leased = (tract.legal_description or "").strip() in leased_legal_descs
+
+        tract_entry = {
+            "tract_id": tract.id,
+            "legal_description": tract.legal_description,
+            "gross_acres": tract.gross_acres,
+            "is_leased": is_leased,
+            "parsed": parsed_dict,
+            "instruments": tract_instruments,
+        }
+        parsed_tracts.append(tract_entry)
+
+        # Build township index for the grid view
+        for sec in parsed_dict.get("sections", []):
+            tn = sec.get("township_number")
+            td = sec.get("township_dir")
+            rn = sec.get("range_number")
+            rd = sec.get("range_dir")
+            if tn and td and rn and rd:
+                twp_key = f"T{tn}{td} R{rn}{rd}"
+                if twp_key not in township_index:
+                    township_index[twp_key] = {
+                        "key": twp_key,
+                        "township_number": tn,
+                        "township_dir": td,
+                        "range_number": rn,
+                        "range_dir": rd,
+                        "sections": {},
+                    }
+                sn = sec.get("section")
+                if sn:
+                    if sn not in township_index[twp_key]["sections"]:
+                        township_index[twp_key]["sections"][sn] = {
+                            "section": sn,
+                            "grid_position": sec.get("grid_position"),
+                            "tracts": [],
+                        }
+                    township_index[twp_key]["sections"][sn]["tracts"].append({
+                        "tract_id": tract.id,
+                        "is_leased": is_leased,
+                        "coverage_pct": sec.get("coverage_pct", 1.0),
+                        "gross_acres": sec.get("gross_acres") or tract.gross_acres,
+                        "aliquot_parts": sec.get("aliquot_parts", []),
+                        "instruments": tract_instruments,
+                    })
+
+    # Convert township index sections to lists; sort deterministically
+    townships = []
+    for twp_data in township_index.values():
+        twp_out = dict(twp_data)
+        twp_out["sections"] = list(twp_data["sections"].values())
+        townships.append(twp_out)
+    townships.sort(key=lambda t: (
+        t["township_number"] or 0,
+        t["township_dir"] or "",
+        t["range_number"] or 0,
+        t["range_dir"] or "",
+    ))
+
+    return {
+        "project_id": project_id,
+        "project_name": project.name,
+        "jurisdiction": project.jurisdiction,
+        "tracts": parsed_tracts,
+        "townships": townships,
+        "has_plss": any(t["parsed"]["is_plss"] for t in parsed_tracts),
+        "non_plss_tracts": [t for t in parsed_tracts if not t["parsed"]["is_plss"]],
+    }
+
+
 @router.delete("/projects/{project_id}")
-def delete_project(project_id: int, db: Session = Depends(get_db)):
+def delete_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_project_role(db, user, project_id, "owner")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -479,16 +890,25 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     return {"status": "deleted", "id": project_id}
 
 @router.get("/search")
-def global_search(q: str = "", limit: int = 10, db: Session = Depends(get_db)):
+def global_search(
+    q: str = "",
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     term = (q or "").strip()
     if len(term) < 2:
         return {"query": term, "results": {"projects": [], "documents": [], "parties": [], "tracts": []}}
 
     like = f"%{term}%"
+    accessible_ids = _user_accessible_project_ids(db, user)
 
     projects = (
         db.query(Project)
-        .filter((Project.name.ilike(like)) | (Project.jurisdiction.ilike(like)))
+        .filter(
+            Project.id.in_(accessible_ids),
+            (Project.name.ilike(like)) | (Project.jurisdiction.ilike(like)),
+        )
         .limit(limit)
         .all()
     )
@@ -496,7 +916,7 @@ def global_search(q: str = "", limit: int = 10, db: Session = Depends(get_db)):
     documents = (
         db.query(Document, Project)
         .join(Project, Document.project_id == Project.id)
-        .filter(Document.s3_key.ilike(like))
+        .filter(Document.project_id.in_(accessible_ids), Document.s3_key.ilike(like))
         .limit(limit)
         .all()
     )
@@ -504,7 +924,7 @@ def global_search(q: str = "", limit: int = 10, db: Session = Depends(get_db)):
     parties = (
         db.query(Party, Project)
         .join(Project, Party.project_id == Project.id)
-        .filter(Party.name.ilike(like))
+        .filter(Party.project_id.in_(accessible_ids), Party.name.ilike(like))
         .limit(limit)
         .all()
     )
@@ -512,7 +932,7 @@ def global_search(q: str = "", limit: int = 10, db: Session = Depends(get_db)):
     tracts = (
         db.query(Tract, Project)
         .join(Project, Tract.project_id == Project.id)
-        .filter(Tract.legal_description.ilike(like))
+        .filter(Tract.project_id.in_(accessible_ids), Tract.legal_description.ilike(like))
         .limit(limit)
         .all()
     )
