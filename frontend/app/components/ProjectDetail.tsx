@@ -5,20 +5,23 @@ import Runsheet from "./Runsheet";
 import OwnershipView from "./OwnershipView";
 import ObligationCalendar from "./ObligationCalendar";
 import RiskDashboard from "./RiskDashboard";
+import DocumentUpload from "./DocumentUpload";
 import ExportButton from "./ExportButton";
 
-type ViewType = "runsheet" | "ownership" | "calendar" | "risk";
+type ViewType = "documents" | "runsheet" | "ownership" | "calendar" | "risk";
 
 interface ProjectDetailProps {
   projectId: number;
   projectName: string;
   jurisdiction: string;
+  onBack: () => void;
 }
 
-export default function ProjectDetail({ projectId, projectName, jurisdiction }: ProjectDetailProps) {
-  const [currentView, setCurrentView] = useState<ViewType>("runsheet");
+export default function ProjectDetail({ projectId, projectName, jurisdiction, onBack }: ProjectDetailProps) {
+  const [currentView, setCurrentView] = useState<ViewType>("documents");
 
   const views: { id: ViewType; label: string }[] = [
+    { id: "documents", label: "Documents" },
     { id: "runsheet", label: "Runsheet" },
     { id: "ownership", label: "Ownership" },
     { id: "calendar", label: "Obligations" },
@@ -29,6 +32,12 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction }: 
     <div className="min-h-screen bg-white">
       {/* Header */}
       <header className="bg-slate-900 text-white p-6 border-b border-slate-700">
+        <button
+          onClick={onBack}
+          className="mb-4 px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm"
+        >
+          ← Back to Projects
+        </button>
         <h1 className="text-2xl font-bold">{projectName}</h1>
         <p className="text-slate-400">{jurisdiction} • Project ID: {projectId}</p>
       </header>
@@ -57,6 +66,7 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction }: 
 
       {/* Content */}
       <div className="max-w-6xl mx-auto">
+        {currentView === "documents" && <DocumentUpload projectId={projectId} />}
         {currentView === "runsheet" && <Runsheet projectId={projectId} />}
         {currentView === "ownership" && <OwnershipView projectId={projectId} />}
         {currentView === "calendar" && <ObligationCalendar projectId={projectId} />}

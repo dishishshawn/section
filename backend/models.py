@@ -26,6 +26,7 @@ class Document(Base):
     s3_key = Column(String)
     mime = Column(String)
     page_count = Column(Integer, nullable=True)
+    content_hash = Column(String, nullable=True, index=True)
     ocr_status = Column(String, default="pending")
     extraction_status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)

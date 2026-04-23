@@ -1,14 +1,21 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List
+from pathlib import Path
+import hashlib
 import uuid
 import os
-from database import get_db
+from datetime import datetime
+from database import get_db, SessionLocal
 from models import Project, Document, Tract, Party, Instrument, Interest, Obligation
 from pydantic import BaseModel
 from exports import OwnershipReportGenerator
+from extractors import process_document
+
+UPLOAD_DIR = Path(__file__).parent / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -18,15 +25,14 @@ class ProjectCreate(BaseModel):
     owner_org: str = None
 
 class ProjectResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
     id: int
     name: str
     jurisdiction: str
     created_at: str
 
-    class Config:
-        from_attributes = True
-
-@router.post("/projects", response_model=ProjectResponse)
+@router.post("/projects")
 def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
     db_project = Project(
         name=project.name,
@@ -36,44 +42,112 @@ def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
     db.add(db_project)
     db.commit()
     db.refresh(db_project)
-    return db_project
+    return {"id": db_project.id, "name": db_project.name, "jurisdiction": db_project.jurisdiction, "created_at": db_project.created_at.isoformat()}
 
-@router.get("/projects/{project_id}", response_model=ProjectResponse)
+@router.get("/projects/{project_id}")
 def get_project(project_id: int, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return project
+    return {"id": project.id, "name": project.name, "jurisdiction": project.jurisdiction, "created_at": project.created_at.isoformat()}
 
-@router.get("/projects", response_model=List[ProjectResponse])
+@router.get("/projects")
 def list_projects(db: Session = Depends(get_db)):
-    return db.query(Project).all()
+    try:
+        projects = db.query(Project).all()
+        return [{"id": p.id, "name": p.name, "jurisdiction": p.jurisdiction, "created_at": p.created_at.isoformat()} for p in projects]
+    except Exception as e:
+        import traceback
+        print(f"ERROR in list_projects: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+def _run_extraction(document_id: int, file_path_str: str):
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.id == document_id).first()
+        if doc:
+            process_document(db, doc, Path(file_path_str))
+    except Exception as e:
+        print(f"[extraction worker] document {document_id} failed: {e}")
+    finally:
+        db.close()
+
 
 @router.post("/projects/{project_id}/documents")
-async def upload_document(project_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_document(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    s3_key = f"{project_id}/{uuid.uuid4()}/{file.filename}"
+    raw_name = file.filename or "unnamed"
+    safe_name = Path(raw_name.replace("\\", "/")).name or "unnamed"
+
+    contents = await file.read()
+    content_hash = hashlib.sha256(contents).hexdigest()
+
+    existing = db.query(Document).filter(
+        Document.project_id == project_id,
+        Document.content_hash == content_hash,
+    ).first()
+    if existing:
+        return {
+            "id": existing.id,
+            "s3_key": existing.s3_key,
+            "filename": safe_name,
+            "status": "duplicate",
+            "extraction_status": existing.extraction_status,
+            "message": "This file already exists in the project",
+        }
+
+    project_dir = UPLOAD_DIR / str(project_id)
+    project_dir.mkdir(exist_ok=True)
+    unique_name = f"{uuid.uuid4().hex}_{safe_name}"
+    file_path = project_dir / unique_name
+    file_path.write_bytes(contents)
 
     doc = Document(
         project_id=project_id,
-        s3_key=s3_key,
+        s3_key=str(file_path.relative_to(UPLOAD_DIR)),
         mime=file.content_type,
+        content_hash=content_hash,
         ocr_status="pending",
-        extraction_status="pending"
+        extraction_status="queued",
     )
     db.add(doc)
     db.commit()
     db.refresh(doc)
 
-    return {"id": doc.id, "s3_key": s3_key, "status": "uploaded"}
+    background_tasks.add_task(_run_extraction, doc.id, str(file_path))
+
+    return {
+        "id": doc.id,
+        "s3_key": doc.s3_key,
+        "filename": safe_name,
+        "status": "queued",
+        "extraction_status": "queued",
+    }
 
 @router.get("/projects/{project_id}/documents")
 def list_documents(project_id: int, db: Session = Depends(get_db)):
-    docs = db.query(Document).filter(Document.project_id == project_id).all()
-    return [{"id": d.id, "s3_key": d.s3_key, "mime": d.mime, "extraction_status": d.extraction_status} for d in docs]
+    docs = db.query(Document).filter(Document.project_id == project_id).order_by(Document.created_at.desc()).all()
+    return [
+        {
+            "id": d.id,
+            "s3_key": d.s3_key,
+            "filename": d.s3_key.split("_", 1)[-1] if "_" in (d.s3_key or "") else d.s3_key,
+            "mime": d.mime,
+            "ocr_status": d.ocr_status,
+            "extraction_status": d.extraction_status,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in docs
+    ]
 
 @router.post("/projects/{project_id}/extract")
 def extract_document(project_id: int, document_id: int, db: Session = Depends(get_db)):
@@ -95,37 +169,190 @@ def get_ownership(project_id: int, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    tracts = db.query(Tract).filter(Tract.project_id == project_id).all()
     interests = db.query(Interest).join(Tract).filter(Tract.project_id == project_id).all()
+    lease_count = db.query(Instrument).filter(
+        Instrument.project_id == project_id,
+        Instrument.type == "lease",
+    ).count()
 
-    result = {
+    total_acres = sum(t.gross_acres or 0 for t in tracts)
+    leased_acres = total_acres if lease_count > 0 else 0
+
+    owners = []
+    for i in interests:
+        denom = i.fraction_denominator or 1
+        num = i.fraction_numerator or 0
+        pct = round((num / denom) * 100, 2) if denom else 0
+        owners.append({
+            "name": i.party.name if i.party else "Unknown",
+            "fraction": f"{num}/{denom}",
+            "percentage": pct,
+            "mineral_estate": i.mineral_estate or "Unknown",
+        })
+
+    return {
         "project_id": project_id,
-        "total_interests": len(interests),
-        "interests": [
-            {
-                "party": i.party.name if i.party else None,
-                "fraction": f"{i.fraction_numerator}/{i.fraction_denominator}",
-                "mineral_estate": i.mineral_estate
-            }
-            for i in interests
-        ]
+        "owners": owners,
+        "total_acres": total_acres,
+        "leased_acres": leased_acres,
+        "open_acres": max(total_acres - leased_acres, 0),
     }
-    return result
 
 @router.get("/projects/{project_id}/obligations")
 def get_obligations(project_id: int, db: Session = Depends(get_db)):
     obligations = db.query(Obligation).filter(Obligation.project_id == project_id).all()
+    now = datetime.utcnow()
+
+    def priority_for(days: int) -> str:
+        if days <= 30:
+            return "high"
+        if days <= 120:
+            return "medium"
+        return "low"
+
+    items = []
+    for o in obligations:
+        days_until = (o.due_date - now).days if o.due_date else 0
+        items.append({
+            "id": o.id,
+            "type": o.type or "Obligation",
+            "due_date": o.due_date.isoformat() if o.due_date else None,
+            "days_until": days_until,
+            "priority": priority_for(days_until),
+            "description": (o.params or {}).get("description") if isinstance(o.params, dict) else str(o.params or ""),
+        })
+
+    return {"project_id": project_id, "obligations": items}
+
+def _instrument_parties(inst: Instrument) -> tuple[str, str]:
+    data = inst.extracted_data if isinstance(inst.extracted_data, dict) else {}
+    grantor = data.get("grantor") or data.get("lessor") or ""
+    grantee = data.get("grantee") or data.get("lessee") or ""
+    return grantor, grantee
+
+@router.get("/projects/{project_id}/runsheet")
+def get_runsheet(project_id: int, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    instruments = (
+        db.query(Instrument)
+        .filter(Instrument.project_id == project_id)
+        .order_by(Instrument.recorded_at.asc())
+        .all()
+    )
+
+    chain = []
+    for inst in instruments:
+        grantor, grantee = _instrument_parties(inst)
+        if not grantor or not grantee:
+            status = "missing"
+        elif "unknown" in grantor.lower() or "unknown" in grantee.lower():
+            status = "flagged"
+        else:
+            status = "complete"
+
+        chain.append({
+            "instrument_type": (inst.type or "instrument").replace("_", " ").title(),
+            "grantor": grantor or "Unknown",
+            "grantee": grantee or "Unknown",
+            "date": inst.recorded_at.isoformat()[:10] if inst.recorded_at else "",
+            "status": status,
+        })
+
+    gaps = []
+    for idx in range(len(chain) - 1):
+        prev, nxt = chain[idx], chain[idx + 1]
+        if prev["grantee"] != nxt["grantor"] and "Unknown" not in (prev["grantee"], nxt["grantor"]):
+            gaps.append({
+                "from": prev["grantee"],
+                "to": nxt["grantor"],
+                "missing_document": f"Missing conveyance from {prev['grantee']} to {nxt['grantor']}",
+            })
+    for item in chain:
+        if item["status"] == "flagged":
+            gaps.append({
+                "from": item["grantor"],
+                "to": item["grantee"],
+                "missing_document": f"Unknown party in {item['instrument_type']} - curative affidavit needed",
+            })
+
+    return {"project_id": project_id, "chain": chain, "gaps": gaps}
+
+@router.get("/projects/{project_id}/risk")
+def get_risk(project_id: int, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    instruments = db.query(Instrument).filter(Instrument.project_id == project_id).all()
+    leases = [i for i in instruments if (i.type or "").lower() == "lease"]
+    obligations = db.query(Obligation).filter(Obligation.project_id == project_id).all()
+    now = datetime.utcnow()
+    expiring_soon = sum(1 for o in obligations if o.due_date and 0 <= (o.due_date - now).days <= 90)
+
+    royalties = []
+    for lease in leases:
+        data = lease.extracted_data if isinstance(lease.extracted_data, dict) else {}
+        royalty = data.get("royalty")
+        if isinstance(royalty, (int, float)):
+            royalties.append(float(royalty) * (100 if royalty <= 1 else 1))
+        elif isinstance(royalty, str):
+            import re as _re
+            frac_match = _re.search(r"(\d+)\s*/\s*(\d+)", royalty)
+            pct_match = _re.search(r"([\d.]+)\s*%", royalty)
+            if frac_match:
+                try:
+                    royalties.append(int(frac_match.group(1)) / int(frac_match.group(2)) * 100)
+                except (ValueError, ZeroDivisionError):
+                    pass
+            elif pct_match:
+                try:
+                    royalties.append(float(pct_match.group(1)))
+                except ValueError:
+                    pass
+
+    royalty_range = {
+        "min": round(min(royalties), 3) if royalties else 0,
+        "max": round(max(royalties), 3) if royalties else 0,
+    }
+
+    flagged = []
+    idx = 1
+    for inst in instruments:
+        grantor, grantee = _instrument_parties(inst)
+        if "unknown" in (grantor + " " + grantee).lower():
+            flagged.append({
+                "id": idx,
+                "lease": f"{(inst.type or 'instrument').replace('_', ' ').title()}",
+                "risk_type": "Title Defect",
+                "severity": "critical",
+                "description": f"Unknown party in chain of title: {grantor or '?'} → {grantee or '?'}. Curative needed.",
+            })
+            idx += 1
+
+    for o in obligations:
+        if o.due_date:
+            days = (o.due_date - now).days
+            if 0 <= days <= 45:
+                desc = (o.params or {}).get("description") if isinstance(o.params, dict) else None
+                flagged.append({
+                    "id": idx,
+                    "lease": (o.type or "obligation").replace("_", " ").title(),
+                    "risk_type": "Expiration",
+                    "severity": "high" if days <= 30 else "medium",
+                    "description": desc or f"{o.type} due in {days} days",
+                })
+                idx += 1
 
     return {
         "project_id": project_id,
-        "obligations": [
-            {
-                "id": o.id,
-                "type": o.type,
-                "due_date": o.due_date.isoformat() if o.due_date else None,
-                "params": o.params
-            }
-            for o in obligations
-        ]
+        "total_leases": len(leases),
+        "expiring_soon": expiring_soon,
+        "royalty_range": royalty_range,
+        "flagged_issues": flagged,
     }
 
 @router.get("/projects/{project_id}/export/ownership")
@@ -160,6 +387,15 @@ def export_ownership_report(project_id: int, db: Session = Depends(get_db)):
         media_type="application/pdf",
         filename=f"{project.name}_Ownership_Report.pdf"
     )
+
+@router.delete("/projects/{project_id}")
+def delete_project(project_id: int, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    db.delete(project)
+    db.commit()
+    return {"status": "deleted", "id": project_id}
 
 @router.post("/health")
 def health():

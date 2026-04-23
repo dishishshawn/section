@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import axios from "axios";
+import ProjectDetail from "./ProjectDetail";
 
 interface Project {
   id: number;
@@ -14,9 +15,12 @@ export default function ProjectShell() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectJurisdiction, setNewProjectJurisdiction] = useState("Oklahoma");
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState<number | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -39,24 +43,43 @@ export default function ProjectShell() {
 
   const createProject = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
     try {
       const res = await axios.post(`${API_URL}/projects`, {
         name: newProjectName,
         jurisdiction: newProjectJurisdiction,
+        owner_org: "Demo",
       });
       setProjects([...projects, res.data]);
       setNewProjectName("");
       setError(null);
+      setSelectedProjectId(res.data.id);
     } catch (err: any) {
-      setError(err.message || "Failed to create project");
+      console.error("Create project error:", err);
+      setError(err.response?.data?.detail || err.message || "Failed to create project");
+      setSubmitting(false);
+    }
+  };
+
+  const deleteProject = async (projectId: number) => {
+    if (!confirm("Delete this project? This cannot be undone.")) return;
+    setDeleting(projectId);
+    try {
+      await axios.delete(`${API_URL}/projects/${projectId}`);
+      setProjects(projects.filter((p) => p.id !== projectId));
+      setError(null);
+    } catch (err: any) {
+      console.error("Delete error:", err);
+      setError("Failed to delete project");
+    } finally {
+      setDeleting(null);
     }
   };
 
   if (selectedProjectId !== null) {
     const selected = projects.find((p) => p.id === selectedProjectId);
     if (selected) {
-      const ProjectDetail = require("./ProjectDetail").default;
-      return <ProjectDetail projectId={selected.id} projectName={selected.name} jurisdiction={selected.jurisdiction} />;
+      return <ProjectDetail projectId={selected.id} projectName={selected.name} jurisdiction={selected.jurisdiction} onBack={() => setSelectedProjectId(null)} />;
     }
   }
 
@@ -84,20 +107,22 @@ export default function ProjectShell() {
               onChange={(e) => setNewProjectJurisdiction(e.target.value)}
               className="p-2 border border-slate-300 rounded"
             >
-              <option>Oklahoma</option>
-              <option>Texas</option>
-              <option>New Mexico</option>
+              <option value="Oklahoma">Oklahoma</option>
+              <option value="Texas">Texas</option>
+              <option value="New Mexico">New Mexico</option>
             </select>
           </div>
           <button
             type="submit"
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            disabled={submitting}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            Create Project
+            {submitting ? "Creating..." : "Create Project"}
           </button>
         </form>
 
         {error && <div className="p-4 bg-red-50 text-red-700 rounded mb-4">{error}</div>}
+        {success && <div className="p-4 bg-green-50 text-green-700 rounded mb-4">{success}</div>}
 
         {loading ? (
           <div className="text-center p-8">Loading projects...</div>
@@ -111,12 +136,23 @@ export default function ProjectShell() {
                 {projects.map((project) => (
                   <div
                     key={project.id}
-                    onClick={() => setSelectedProjectId(project.id)}
-                    className="p-4 border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer"
+                    className="p-4 border border-slate-200 rounded-lg hover:bg-slate-50 flex justify-between items-start"
                   >
-                    <h3 className="font-bold text-lg">{project.name}</h3>
-                    <p className="text-sm text-slate-600">{project.jurisdiction}</p>
-                    <p className="text-xs text-slate-400">Created: {new Date(project.created_at).toLocaleDateString()}</p>
+                    <div
+                      onClick={() => setSelectedProjectId(project.id)}
+                      className="flex-1 cursor-pointer"
+                    >
+                      <h3 className="font-bold text-lg">{project.name}</h3>
+                      <p className="text-sm text-slate-600">{project.jurisdiction}</p>
+                      <p className="text-xs text-slate-400">Created: {new Date(project.created_at).toLocaleDateString()}</p>
+                    </div>
+                    <button
+                      onClick={() => deleteProject(project.id)}
+                      disabled={deleting === project.id}
+                      className="ml-4 px-3 py-1 text-sm bg-red-600 hover:bg-red-700 text-white rounded disabled:bg-gray-400"
+                    >
+                      {deleting === project.id ? "Deleting..." : "Delete"}
+                    </button>
                   </div>
                 ))}
               </div>

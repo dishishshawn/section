@@ -23,3 +23,22 @@ node_modules/
 
 # OS specific
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Local databases and uploads
+*.db
+*.sqlite
+*.sqlite3
+backend/uploads/
+
+# Next.js
+.next/
+
+# Local test fixtures (large binary PDFs)
+sample-landman-docs/

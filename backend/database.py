@@ -4,7 +4,10 @@ from sqlalchemy.orm import sessionmaker
 import os
 
 # Use SQLite for local dev if Postgres unavailable
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./section_dev.db")
+# Use absolute path to project root
+import sys
+db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "section_dev.db")
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{db_path}")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
