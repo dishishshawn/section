@@ -28,13 +28,6 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 const ACCEPTED_EXT = /\.(pdf|txt|jpe?g|png|tiff?)$/i;
 
-const statusStyles: Record<string, string> = {
-  queued: "bg-slate-100 text-slate-700",
-  in_progress: "bg-blue-100 text-blue-700",
-  complete: "bg-green-100 text-green-700",
-  pending: "bg-slate-100 text-slate-700",
-};
-
 function statusLabel(status: string): string {
   if (!status) return "pending";
   if (status.startsWith("skipped")) return "Skipped";
@@ -53,10 +46,12 @@ function statusTitle(status: string): string {
 }
 
 function statusClass(status: string): string {
-  if (!status) return "bg-slate-100 text-slate-700";
-  if (status.startsWith("skipped")) return "bg-amber-100 text-amber-800";
-  if (status.startsWith("failed")) return "bg-red-100 text-red-700";
-  return statusStyles[status] || "bg-slate-100 text-slate-700";
+  if (!status) return "bg-line/40 text-ink-3";
+  if (status.startsWith("skipped")) return "bg-warn-soft text-warn";
+  if (status.startsWith("failed")) return "bg-danger-soft text-danger";
+  if (status === "complete") return "bg-positive-soft text-positive";
+  if (status === "in_progress") return "bg-info-soft text-info";
+  return "bg-line/40 text-ink-3";
 }
 
 export default function DocumentUpload({ projectId, onExtractionComplete }: DocumentUploadProps) {
@@ -226,8 +221,13 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
   const errorCount = progress.filter((p) => p.status === "error").length;
 
   return (
-    <div className="p-6">
-      <h2 className="text-2xl font-bold mb-6">Project Documents</h2>
+    <div className="px-8 py-10">
+      <div className="mb-8">
+        <div className="font-mono text-xs uppercase tracking-[0.18em] text-ink-3 mb-1.5">
+          01 — Documents
+        </div>
+        <h2 className="font-display text-3xl font-semibold text-ink">Project documents</h2>
+      </div>
 
       <div
         onDragOver={(e) => {
@@ -236,35 +236,48 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
         }}
         onDragLeave={() => setDragActive(false)}
         onDrop={handleDrop}
-        className={`mb-6 p-8 border-2 border-dashed rounded-lg text-center transition-colors ${
-          dragActive ? "border-blue-500 bg-blue-50" : "border-slate-300 bg-white"
+        className={`relative mb-6 rounded-xl border-2 border-dashed px-8 py-12 text-center transition-all overflow-hidden ${
+          dragActive
+            ? "border-accent bg-accent-tint scale-[1.005]"
+            : "border-line-strong bg-surface hover:border-ink/30 hover:bg-surface-2"
         }`}
       >
-        <svg className="mx-auto w-10 h-10 text-slate-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-        </svg>
-        <p className="text-slate-700 font-medium mb-1">
-          Drop files or a folder here
-        </p>
-        <p className="text-xs text-slate-400 mb-4">PDF, TXT, or scanned images — multiple at once</p>
-        <div className="flex gap-3 justify-center">
-          <button
-            type="button"
-            onClick={() => filesInputRef.current?.click()}
-            disabled={uploading}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm disabled:bg-gray-400"
-          >
-            Select files
-          </button>
-          <button
-            type="button"
-            onClick={() => folderInputRef.current?.click()}
-            disabled={uploading}
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded text-sm disabled:bg-gray-400"
-          >
-            Select folder
-          </button>
+        <div className="section-grid pointer-events-none absolute inset-0 opacity-30" />
+        <div className="relative">
+          <div className="mx-auto mb-4 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-ink text-white">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+              />
+            </svg>
+          </div>
+          <p className="font-display text-lg font-semibold text-ink mb-1">
+            Drop files or a folder
+          </p>
+          <p className="text-xs text-ink-3 mb-5 font-mono uppercase tracking-wider">
+            PDF · TXT · JPG · PNG · TIFF
+          </p>
+          <div className="flex gap-2 justify-center">
+            <button
+              type="button"
+              onClick={() => filesInputRef.current?.click()}
+              disabled={uploading}
+              className="px-4 py-2 rounded-lg bg-ink text-white text-sm font-medium hover:bg-accent-strong transition-colors disabled:opacity-50"
+            >
+              Select files
+            </button>
+            <button
+              type="button"
+              onClick={() => folderInputRef.current?.click()}
+              disabled={uploading}
+              className="px-4 py-2 rounded-lg bg-surface border border-line-strong text-ink text-sm font-medium hover:border-ink/40 hover:bg-surface-2 transition-colors disabled:opacity-50"
+            >
+              Select folder
+            </button>
+          </div>
         </div>
         <input
           ref={filesInputRef}
@@ -287,11 +300,11 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
       </div>
 
       {progress.length > 0 && (
-        <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg">
+        <div className="mb-6 rounded-xl border border-line bg-surface px-4 py-3">
           <div className="flex justify-between items-center mb-2">
-            <h3 className="font-semibold text-sm">
+            <h3 className="text-xs font-mono uppercase tracking-[0.16em] text-ink-2">
               {pendingCount > 0
-                ? `Uploading ${pendingCount} of ${progress.length}...`
+                ? `Uploading ${pendingCount} of ${progress.length}…`
                 : errorCount > 0
                   ? `Finished with ${errorCount} error${errorCount === 1 ? "" : "s"}`
                   : "Upload complete"}
@@ -299,7 +312,7 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
             {pendingCount === 0 && (
               <button
                 onClick={() => setProgress([])}
-                className="text-xs text-slate-500 hover:text-slate-700"
+                className="text-xs text-ink-3 hover:text-ink transition-colors"
               >
                 Dismiss
               </button>
@@ -307,43 +320,73 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
           </div>
           <div className="space-y-1 max-h-40 overflow-y-auto">
             {progress.map((p, idx) => (
-              <div key={idx} className="flex justify-between items-center text-xs">
-                <span className="truncate flex-1 mr-2">{p.filename}</span>
-                {p.status === "uploading" && <span className="text-blue-600">uploading...</span>}
-                {p.status === "done" && <span className="text-green-600">done</span>}
-                {p.status === "duplicate" && <span className="text-amber-600">already in project</span>}
-                {p.status === "error" && <span className="text-red-600" title={p.error}>failed</span>}
+              <div key={idx} className="flex justify-between items-center text-xs gap-3 py-0.5">
+                <span className="truncate flex-1 text-ink-2 font-mono">{p.filename}</span>
+                {p.status === "uploading" && <span className="text-info">uploading…</span>}
+                {p.status === "done" && <span className="text-positive">done</span>}
+                {p.status === "duplicate" && <span className="text-warn">already in project</span>}
+                {p.status === "error" && (
+                  <span className="text-danger" title={p.error}>
+                    failed
+                  </span>
+                )}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {error && <div className="p-4 bg-red-50 text-red-700 rounded mb-4">{error}</div>}
+      {error && (
+        <div className="mb-6 flex items-start gap-3 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3">
+          <span className="text-danger font-mono text-xs mt-0.5">ERR</span>
+          <span className="text-danger text-sm">{error}</span>
+        </div>
+      )}
+
+      <div className="flex items-baseline justify-between mb-4">
+        <h3 className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-3">
+          Library
+        </h3>
+        <span className="text-xs text-ink-3 tabular">
+          {documents.length} {documents.length === 1 ? "document" : "documents"}
+        </span>
+      </div>
 
       {loading && documents.length === 0 ? (
-        <div className="text-center text-slate-500">Loading documents...</div>
+        <div className="rounded-xl border border-line bg-surface px-6 py-12 text-center text-sm text-ink-3">
+          <span className="inline-block w-3 h-3 border-2 border-ink-3/30 border-t-ink rounded-full animate-spin mr-2 align-middle" />
+          Loading documents…
+        </div>
       ) : documents.length === 0 ? (
-        <div className="text-center text-slate-500 py-8">
-          No documents uploaded yet. Start by uploading a lease or deed.
+        <div className="rounded-xl border border-dashed border-line-strong bg-surface-2 px-6 py-12 text-center">
+          <div className="font-display text-base text-ink mb-1">No documents yet</div>
+          <p className="text-sm text-ink-3">Start by uploading a lease or deed.</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <ul className="space-y-2">
           {documents.map((doc) => (
-            <div key={doc.id} className="p-4 border border-slate-200 rounded-lg flex justify-between items-start">
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold truncate">{doc.filename}</p>
-                <p className="text-sm text-slate-600">{doc.mime || "unknown type"}</p>
+            <li
+              key={doc.id}
+              className="rounded-xl border border-line bg-surface px-4 py-3 flex justify-between items-center gap-4 hover:border-line-strong transition-colors"
+            >
+              <div className="min-w-0 flex-1 flex items-center gap-3">
+                <span className="flex-shrink-0 w-8 h-8 rounded-md bg-paper border border-line flex items-center justify-center text-[0.6rem] font-mono uppercase text-ink-3">
+                  {(doc.filename.split(".").pop() || "doc").slice(0, 4)}
+                </span>
+                <div className="min-w-0">
+                  <p className="font-medium text-ink truncate">{doc.filename}</p>
+                  <p className="text-xs text-ink-3 font-mono">{doc.mime || "unknown type"}</p>
+                </div>
               </div>
               <span
                 title={statusTitle(doc.extraction_status)}
-                className={`ml-4 px-2 py-1 text-xs rounded-full whitespace-nowrap ${statusClass(doc.extraction_status)}`}
+                className={`px-2 py-1 text-[0.7rem] font-mono uppercase tracking-wider rounded-md whitespace-nowrap ${statusClass(doc.extraction_status)}`}
               >
                 {statusLabel(doc.extraction_status)}
               </span>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );

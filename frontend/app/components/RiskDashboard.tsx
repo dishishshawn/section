@@ -21,11 +21,14 @@ interface RiskDashboardData {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
-const severityStyles: Record<string, { bg: string; badge: string }> = {
-  critical: { bg: "bg-red-50 border-red-300", badge: "bg-red-200 text-red-800" },
-  high: { bg: "bg-orange-50 border-orange-300", badge: "bg-orange-200 text-orange-800" },
-  medium: { bg: "bg-yellow-50 border-yellow-300", badge: "bg-yellow-200 text-yellow-800" },
-  low: { bg: "bg-blue-50 border-blue-300", badge: "bg-blue-200 text-blue-800" },
+const SEVERITY: Record<
+  string,
+  { rail: string; chip: string; label: string }
+> = {
+  critical: { rail: "bg-danger", chip: "bg-danger-soft text-danger", label: "Critical" },
+  high: { rail: "bg-warn", chip: "bg-warn-soft text-warn", label: "High" },
+  medium: { rail: "bg-accent", chip: "bg-accent-soft text-accent-strong", label: "Medium" },
+  low: { rail: "bg-info", chip: "bg-info-soft text-info", label: "Low" },
 };
 
 export default function RiskDashboard({ projectId }: { projectId: number }) {
@@ -48,57 +51,79 @@ export default function RiskDashboard({ projectId }: { projectId: number }) {
     fetchDashboard();
   }, [projectId]);
 
-  if (loading) return <div className="p-4">Loading risk dashboard...</div>;
-  if (error) return <div className="p-4 text-red-600">{error}</div>;
+  if (loading) {
+    return (
+      <div className="px-8 py-10 text-sm text-ink-3">
+        <span className="inline-block w-3 h-3 border-2 border-ink-3/30 border-t-ink rounded-full animate-spin mr-2 align-middle" />
+        Loading risk dashboard…
+      </div>
+    );
+  }
+  if (error) return <div className="px-8 py-10 text-sm text-danger">{error}</div>;
 
   const isEmpty = !data?.total_leases && !data?.flagged_issues?.length;
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold mb-6">A&D / Risk Dashboard</h2>
+    <div className="px-8 py-10">
+      <div className="mb-8">
+        <div className="font-mono text-xs uppercase tracking-[0.18em] text-ink-3 mb-1.5">
+          05 — A&D / Risk
+        </div>
+        <h2 className="font-display text-3xl font-semibold text-ink">Risk dashboard</h2>
+      </div>
 
       {isEmpty ? (
-        <div className="p-8 text-center border-2 border-dashed border-slate-300 rounded-lg">
-          <p className="text-slate-500 mb-2">No risk data yet.</p>
-          <p className="text-sm text-slate-400">
+        <div className="rounded-xl border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
+          <div className="font-display text-lg text-ink mb-1">No risk data yet</div>
+          <p className="text-sm text-ink-3 max-w-md mx-auto">
             Upload documents to surface title defects, expirations, and burdens.
           </p>
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-4 mb-8">
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="text-sm text-gray-600">Total Leases</div>
-              <div className="text-2xl font-bold">{data!.total_leases}</div>
-            </div>
-            <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
-              <div className="text-sm text-gray-600">Expiring Soon</div>
-              <div className="text-2xl font-bold text-orange-700">{data!.expiring_soon}</div>
-            </div>
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-              <div className="text-sm text-gray-600">Royalty Range</div>
-              <div className="text-lg font-bold text-red-700">
-                {data!.royalty_range.min}% - {data!.royalty_range.max}%
-              </div>
-            </div>
+          <div className="grid grid-cols-3 gap-px bg-line rounded-xl overflow-hidden border border-line mb-10">
+            <Metric label="Total leases" value={data!.total_leases.toString()} />
+            <Metric
+              label="Expiring soon"
+              value={data!.expiring_soon.toString()}
+              tone={data!.expiring_soon > 0 ? "warn" : "neutral"}
+            />
+            <Metric
+              label="Royalty range"
+              value={`${data!.royalty_range.min}–${data!.royalty_range.max}%`}
+            />
           </div>
 
           {data!.flagged_issues.length > 0 && (
             <>
-              <h3 className="text-lg font-bold mb-4">Flagged Issues Requiring Senior Review</h3>
-              <div className="space-y-3">
+              <div className="flex items-baseline justify-between mb-4">
+                <h3 className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-3">
+                  Flagged issues
+                </h3>
+                <span className="text-xs text-ink-3 tabular">
+                  {data!.flagged_issues.length} requiring senior review
+                </span>
+              </div>
+              <div className="space-y-2">
                 {data!.flagged_issues.map((issue) => {
-                  const style = severityStyles[issue.severity] || severityStyles.low;
+                  const meta = SEVERITY[issue.severity] || SEVERITY.low;
                   return (
-                    <div key={issue.id} className={`border rounded-lg p-4 ${style.bg}`}>
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="font-semibold">{issue.lease}</div>
-                          <div className="text-sm text-gray-600 mt-1">{issue.description}</div>
+                    <div
+                      key={issue.id}
+                      className="relative rounded-xl border border-line bg-surface pl-5 pr-4 py-4 hover:border-line-strong transition-colors"
+                    >
+                      <span className={`absolute left-0 top-3 bottom-3 w-1 rounded-r ${meta.rail}`} />
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="font-display font-semibold text-ink">{issue.lease}</div>
+                          <div className="mt-1 text-sm text-ink-2">{issue.description}</div>
                         </div>
-                        <span className={`px-2 py-1 text-xs font-bold rounded-full ml-2 ${style.badge}`}>
-                          {issue.risk_type}
-                        </span>
+                        <div className="flex flex-col items-end gap-1.5 shrink-0">
+                          <span className={`text-xs font-mono uppercase tracking-wider px-2 py-1 rounded-md ${meta.chip}`}>
+                            {meta.label}
+                          </span>
+                          <span className="text-[0.7rem] font-mono text-ink-3">{issue.risk_type}</span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -108,6 +133,26 @@ export default function RiskDashboard({ projectId }: { projectId: number }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "warn";
+}) {
+  const valueColor = tone === "warn" ? "text-warn" : "text-ink";
+  return (
+    <div className="bg-surface px-5 py-5">
+      <div className="text-[0.7rem] font-mono uppercase tracking-[0.16em] text-ink-3 mb-2">
+        {label}
+      </div>
+      <div className={`font-display text-3xl font-semibold tabular ${valueColor}`}>{value}</div>
     </div>
   );
 }

@@ -34,9 +34,22 @@ export default function ExportButton({ projectId, projectName }: { projectId: nu
     <button
       onClick={handleExport}
       disabled={exporting}
-      className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+      className="group inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-ink text-white text-sm font-medium hover:bg-accent-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      {exporting ? "Generating PDF..." : "📄 Export Report"}
+      {exporting ? (
+        <>
+          <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          Generating PDF
+        </>
+      ) : (
+        <>
+          <span className="font-mono text-xs uppercase tracking-wider text-zinc-300 group-hover:text-accent-soft transition-colors">
+            PDF
+          </span>
+          <span className="w-px h-3 bg-zinc-600 group-hover:bg-accent/50 transition-colors" />
+          Export report
+        </>
+      )}
     </button>
   );
 }
