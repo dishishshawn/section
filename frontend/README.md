@@ -20,6 +20,17 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Onboarding & Sample Deed
+
+The empty-projects state on the dashboard includes a "Try with sample deed" button.
+This is currently a UI stub — it surfaces a "coming soon" note. The backend
+endpoint `POST /api/demo/seed-sample` is intended to land in a follow-up task:
+when wired, it should create a demo project, seed a sample deed, run extraction,
+and return the new project id for client-side navigation.
+
+TODO: implement `POST /api/demo/seed-sample` and replace the stub in
+`app/components/ProjectShell.tsx#seedSampleDeed`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

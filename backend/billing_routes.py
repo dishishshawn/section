@@ -8,15 +8,17 @@ Environment variables required:
   APP_URL                  — Frontend base URL for redirect after checkout
 """
 
+import hashlib
 import os
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import get_db
-from models import Organization, OrgMembership, User
-from org_routes import _require_org_role
+from models import Organization, OrgMembership, StripeWebhookEvent, User
+from permissions import require_org_role as _require_org_role
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -92,6 +94,34 @@ def create_checkout_session(
         raise HTTPException(status_code=500, detail=f"Stripe error: {exc}")
 
 
+def _resolve_org_from_event(db: Session, data: dict) -> Organization | None:
+    """Resolve target org from a Stripe event object.
+
+    Prefer metadata.org_id; fall back to looking up by stripe_customer_id when
+    metadata is missing (Stripe does not always echo metadata on every event).
+    """
+    metadata = data.get("metadata") or {}
+    org_id = metadata.get("org_id")
+    if org_id:
+        try:
+            return (
+                db.query(Organization)
+                .filter(Organization.id == int(org_id))
+                .first()
+            )
+        except (TypeError, ValueError):
+            pass
+
+    customer_id = data.get("customer")
+    if customer_id:
+        return (
+            db.query(Organization)
+            .filter(Organization.stripe_customer_id == customer_id)
+            .first()
+        )
+    return None
+
+
 @router.post("/webhook")
 async def stripe_webhook(
     request: Request,
@@ -100,7 +130,12 @@ async def stripe_webhook(
 ):
     """
     Handle Stripe webhook events.
-    Verify signature, then update org billing_status and stripe_subscription_id.
+
+    Hardened:
+      - verify signature
+      - idempotency: dedupe via stripe_webhook_events.event_id
+      - fallback: when metadata.org_id is missing, find org via customer id
+      - handle customer.subscription.deleted → billing_status = "canceled"
     """
     stripe_key = os.getenv("STRIPE_SECRET_KEY")
     webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
@@ -113,25 +148,61 @@ async def stripe_webhook(
         import stripe  # type: ignore
 
         stripe.api_key = stripe_key
-        event = stripe.Webhook.construct_event(payload, stripe_signature, webhook_secret)
+        event = stripe.Webhook.construct_event(
+            payload, stripe_signature, webhook_secret
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Webhook error: {exc}")
 
+    event_id = event.get("id")
     event_type = event["type"]
     data = event["data"]["object"]
 
+    # --- Idempotency: dedupe by event_id -----------------------------------
+    if event_id:
+        existing = (
+            db.query(StripeWebhookEvent)
+            .filter(StripeWebhookEvent.event_id == event_id)
+            .first()
+        )
+        if existing:
+            return {"received": True, "duplicate": True}
+
+        # Insert BEFORE processing so a concurrent retry cannot reprocess.
+        payload_hash = hashlib.sha256(payload or b"").hexdigest()
+        ledger = StripeWebhookEvent(
+            event_id=event_id,
+            event_type=event_type,
+            payload_hash=payload_hash,
+        )
+        db.add(ledger)
+        try:
+            db.commit()
+        except IntegrityError:
+            # Race: another worker inserted the same event_id concurrently.
+            db.rollback()
+            return {"received": True, "duplicate": True}
+
+    # --- Dispatch ---------------------------------------------------------
     if event_type in (
         "customer.subscription.created",
         "customer.subscription.updated",
-        "customer.subscription.deleted",
     ):
-        org_id = data.get("metadata", {}).get("org_id")
-        if org_id:
-            org = db.query(Organization).filter(Organization.id == int(org_id)).first()
-            if org:
-                org.stripe_subscription_id = data["id"]
-                org.billing_status = data["status"]
-                db.commit()
+        org = _resolve_org_from_event(db, data)
+        if org:
+            org.stripe_subscription_id = data.get("id")
+            org.billing_status = data.get("status")
+            # Backfill customer id if we learned it from this event.
+            if not org.stripe_customer_id and data.get("customer"):
+                org.stripe_customer_id = data["customer"]
+            db.commit()
+
+    elif event_type == "customer.subscription.deleted":
+        org = _resolve_org_from_event(db, data)
+        if org:
+            org.stripe_subscription_id = None
+            org.billing_status = "canceled"
+            db.commit()
 
     return {"received": True}
 
@@ -154,4 +225,46 @@ def get_billing_status(
         "billing_status": org.billing_status,
         "seat_count": seat_count,
         "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY")),
+    }
+
+
+@router.get("/org/{org_id}/reconcile-seats")
+def reconcile_seats(
+    org_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Admin-only: recount members and push the quantity to Stripe.
+
+    Useful after manual DB edits, failed webhook deliveries, or billing drift.
+    """
+    _require_org_role(db, user, org_id, "admin")
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Org not found")
+
+    seat_count = (
+        db.query(OrgMembership).filter(OrgMembership.org_id == org_id).count()
+    )
+
+    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    pushed = False
+    error: str | None = None
+    if stripe_key and org.stripe_subscription_id:
+        try:
+            import stripe  # type: ignore
+
+            stripe.api_key = stripe_key
+            sub = stripe.Subscription.retrieve(org.stripe_subscription_id)
+            item_id = sub["items"]["data"][0]["id"]
+            stripe.SubscriptionItem.modify(item_id, quantity=seat_count)
+            pushed = True
+        except Exception as exc:  # pragma: no cover - defensive
+            error = str(exc)
+
+    return {
+        "org_id": org_id,
+        "seat_count": seat_count,
+        "pushed_to_stripe": pushed,
+        "error": error,
     }

@@ -104,6 +104,8 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     display_name = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
+    # Bumped on signout to invalidate outstanding session cookies server-side.
+    session_version = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     memberships = relationship("OrgMembership", back_populates="user", cascade="all, delete-orphan")
@@ -117,7 +119,7 @@ class Organization(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     slug = Column(String, unique=True, index=True, nullable=False)
-    stripe_customer_id = Column(String, nullable=True)
+    stripe_customer_id = Column(String, nullable=True, index=True)
     stripe_subscription_id = Column(String, nullable=True)
     # "active" | "trialing" | "past_due" | "canceled"
     billing_status = Column(String, nullable=True, default="trialing")
@@ -158,7 +160,8 @@ class ProjectAccess(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    # Nullable: personal projects have no owning organization.
+    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     # owner | editor | viewer
     role = Column(String, nullable=False, default="viewer")
     granted_at = Column(DateTime, default=datetime.utcnow)
@@ -187,6 +190,21 @@ class OrgInvite(Base):
 
     org = relationship("Organization", back_populates="invites")
     inviter = relationship("User", foreign_keys=[invited_by])
+
+
+class StripeWebhookEvent(Base):
+    """Idempotency ledger for Stripe webhook events.
+
+    Every incoming event_id is inserted BEFORE processing so a retry of the
+    same delivery cannot double-apply side effects.
+    """
+    __tablename__ = "stripe_webhook_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String, unique=True, nullable=False, index=True)
+    event_type = Column(String, nullable=False)
+    received_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    payload_hash = Column(String, nullable=True)
 
 
 class FactOverride(Base):

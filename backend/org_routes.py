@@ -13,12 +13,13 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, send_magic_link
 from database import get_db
+from rate_limit import client_ip, enforce_rate_limit
 from models import (
     OrgInvite,
     OrgMembership,
@@ -49,15 +50,9 @@ def _org_membership(db: Session, user: User, org_id: int) -> OrgMembership | Non
 
 
 def _require_org_role(db: Session, user: User, org_id: int, min_role: str = "member"):
-    m = _org_membership(db, user, org_id)
-    if not m:
-        raise HTTPException(status_code=403, detail="Not a member of this organization")
-    if ORG_ROLE_RANK.get(m.role, 0) < ORG_ROLE_RANK.get(min_role, 0):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Requires '{min_role}' role in this organization",
-        )
-    return m
+    from permissions import require_org_role
+    require_org_role(db, user, org_id, min_role)
+    return _org_membership(db, user, org_id)
 
 
 def _project_role(db: Session, user: User, project_id: int) -> str | None:
@@ -95,15 +90,8 @@ def _project_role(db: Session, user: User, project_id: int) -> str | None:
 def _require_project_role(
     db: Session, user: User, project_id: int, min_role: str = "viewer"
 ):
-    role = _project_role(db, user, project_id)
-    if role is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if PROJECT_ROLE_RANK.get(role, 0) < PROJECT_ROLE_RANK.get(min_role, 0):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Requires '{min_role}' access on this project",
-        )
-    return role
+    from permissions import require_project_role
+    return require_project_role(db, user, project_id, min_role)
 
 
 # ---------------------------------------------------------------------------
@@ -332,16 +320,19 @@ def _send_invite_email(
 
     api_key = os.getenv("RESEND_API_KEY")
     if api_key:
+        import html
         import resend  # type: ignore
 
+        safe_inviter = html.escape(inviter_display or "Someone")
+        safe_org = html.escape(org_name or "")
         resend.api_key = api_key
         resend.Emails.send(
             {
                 "from": os.getenv("EMAIL_FROM", "Section <noreply@yourdomain.com>"),
                 "to": invited_email,
-                "subject": f"{inviter_display} invited you to {org_name} on Section",
+                "subject": f"{safe_inviter} invited you to {safe_org} on Section",
                 "html": (
-                    f"<p>{inviter_display} has invited you to join <strong>{org_name}</strong> on Section.</p>"
+                    f"<p>{safe_inviter} has invited you to join <strong>{safe_org}</strong> on Section.</p>"
                     f'<p><a href="{link}">Accept invitation</a> (expires in {INVITE_TTL_HOURS} hours)</p>'
                 ),
             }
@@ -364,6 +355,16 @@ def create_invite(
     _require_org_role(db, user, org_id, "admin")
     if body.role not in ORG_ROLE_RANK:
         raise HTTPException(status_code=422, detail="Invalid org role")
+
+    # Anti-spam: 20 invites/day per org. Caps blast radius even if an admin
+    # account is compromised or scripted.
+    enforce_rate_limit(
+        db,
+        key=f"orgs:invite:org:{org_id}",
+        max_count=20,
+        window_seconds=86400,
+        detail="This organization has reached its daily invite limit. Try again tomorrow.",
+    )
 
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
@@ -421,6 +422,7 @@ def preview_invite(token: str, db: Session = Depends(get_db)):
 @router.post("/invites/{token}/accept", status_code=200)
 def accept_invite(
     token: str,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -428,6 +430,15 @@ def accept_invite(
     Authenticated user accepts an invite. Their email must match.
     Creates OrgMembership (and optional ProjectAccess) then adjusts Stripe seats.
     """
+    # Anti-abuse: brute-force guard on opaque invite tokens (token is 32 bytes
+    # so brute force is already infeasible, but cap attempts anyway).
+    enforce_rate_limit(
+        db,
+        key=f"orgs:invite-accept:ip:{client_ip(request)}",
+        max_count=10,
+        window_seconds=60,
+        detail="Too many invite-accept attempts. Try again in a minute.",
+    )
     invite = db.query(OrgInvite).filter(OrgInvite.token == token).first()
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found")

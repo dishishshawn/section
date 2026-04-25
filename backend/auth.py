@@ -9,7 +9,18 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import User
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
+_DEV_SECRET = "dev-secret-change-in-production"
+SECRET_KEY = os.getenv("SECRET_KEY") or ""
+IS_PRODUCTION = os.getenv("ENV", "").lower() == "production"
+
+if IS_PRODUCTION and (not SECRET_KEY or SECRET_KEY == _DEV_SECRET):
+    raise RuntimeError(
+        "SECRET_KEY must be set to a strong random value when ENV=production. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+    )
+if not SECRET_KEY:
+    SECRET_KEY = _DEV_SECRET
+
 _serializer = URLSafeTimedSerializer(SECRET_KEY, salt="magic-link")
 _session_serializer = URLSafeTimedSerializer(SECRET_KEY, salt="session")
 
@@ -32,18 +43,28 @@ def verify_magic_token(token: str) -> str:
     return email
 
 
-def make_session_cookie(user_id: int) -> str:
-    return _session_serializer.dumps(user_id)
+def make_session_cookie(user_id: int, session_version: int) -> str:
+    """Serialize session as [user_id, session_version] so signout can revoke."""
+    return _session_serializer.dumps([user_id, session_version])
 
 
-def _decode_session(token: str) -> int:
+def _decode_session(token: str) -> tuple[int, int]:
     try:
-        return _session_serializer.loads(token, max_age=SESSION_TTL_SECONDS)
+        payload = _session_serializer.loads(token, max_age=SESSION_TTL_SECONDS)
     except (SignatureExpired, BadSignature):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired — sign in again",
         )
+    # Back-compat: older tokens were a bare int user_id (pre-revocation).
+    if isinstance(payload, int):
+        return payload, 0
+    if isinstance(payload, (list, tuple)) and len(payload) == 2:
+        return int(payload[0]), int(payload[1])
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Malformed session — sign in again",
+    )
 
 
 def get_current_user(
@@ -52,17 +73,31 @@ def get_current_user(
 ) -> User:
     if not session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
-    user_id = _decode_session(session)
+    user_id, session_version = _decode_session(session)
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    current_version = getattr(user, "session_version", 0) or 0
+    if session_version != current_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session revoked — sign in again",
+        )
     return user
 
 
 def send_magic_link(email: str, token: str) -> None:
     """Send magic link email. Falls back to stdout in dev if RESEND_API_KEY unset."""
+    from email_templates import magic_link_html
+
     app_url = os.getenv("APP_URL", "http://localhost:8000")
     link = f"{app_url}/api/auth/verify?token={token}"
+
+    from_address = os.getenv("FROM_EMAIL", "noreply@yourdomain.com")
+    from_name = "Section"
+    reply_to = os.getenv("REPLY_TO_EMAIL", f"no-reply@{from_address.split('@')[-1]}")
+
+    html_body = magic_link_html(link, expiry_minutes=LINK_TTL_SECONDS // 60)
 
     api_key = os.getenv("RESEND_API_KEY")
     if not api_key:
@@ -72,11 +107,13 @@ def send_magic_link(email: str, token: str) -> None:
     import resend
     resend.api_key = api_key
     resend.Emails.send({
-        "from": os.getenv("EMAIL_FROM", "Section <noreply@yourdomain.com>"),
+        "from": f"{from_name} <{from_address}>",
+        "reply_to": reply_to,
         "to": email,
         "subject": "Sign in to Section",
-        "html": (
-            f"<p>Click to sign in to Section (link expires in 15 minutes):</p>"
-            f'<p><a href="{link}">{link}</a></p>'
-        ),
+        "html": html_body,
+        "headers": {
+            "List-Unsubscribe": f"<mailto:{reply_to}?subject=unsubscribe>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
     })

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
+import EmptyState from "./EmptyState";
 
 interface Document {
   id: number;
@@ -75,7 +76,7 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
   const fetchDocuments = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/projects/${projectId}/documents`);
+      const res = await axios.get(`${API_URL}/projects/${projectId}/documents`, { withCredentials: true });
       setDocuments(res.data);
       managePolling(res.data);
     } catch {
@@ -90,7 +91,7 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
     if (hasPending && !pollRef.current) {
       pollRef.current = setInterval(async () => {
         try {
-          const res = await axios.get(`${API_URL}/projects/${projectId}/documents`);
+          const res = await axios.get(`${API_URL}/projects/${projectId}/documents`, { withCredentials: true });
           setDocuments(res.data);
           const stillPending = res.data.some(
             (d: Document) => d.extraction_status === "queued" || d.extraction_status === "in_progress"
@@ -114,7 +115,7 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
       const bareName = file.name.split(/[\\/]/).pop() || file.name;
       formData.append("file", file, bareName);
       const res = await axios.post(`${API_URL}/projects/${projectId}/documents`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        withCredentials: true,
       });
       return { ok: true, duplicate: res.data?.status === "duplicate" };
     } catch (err: any) {
@@ -363,12 +364,10 @@ export default function DocumentUpload({ projectId, onExtractionComplete }: Docu
           <span className="font-serif-italic">Loading documents…</span>
         </div>
       ) : documents.length === 0 ? (
-        <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-12 text-center">
-          <div className="font-display text-xl text-ink mb-1">No documents filed</div>
-          <p className="text-sm text-ink-3 font-serif-italic">
-            Start by uploading a lease or deed.
-          </p>
-        </div>
+        <EmptyState
+          title="No documents uploaded"
+          description="Drop a deed or lease above — Section will OCR, extract, and cite every fact back to its source page."
+        />
       ) : (
         <ul className="divide-y divide-line">
           {documents.map((doc) => (

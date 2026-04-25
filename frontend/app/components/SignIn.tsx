@@ -28,7 +28,23 @@ export default function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
       }
       setSent(true);
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to send link");
+      if (err.response?.status === 429) {
+        const retryAfter = Number(err.response.headers?.["retry-after"]);
+        const detail = err.response.data?.detail;
+        const waitMsg =
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? ` Try again in ${
+                retryAfter >= 60
+                  ? `${Math.ceil(retryAfter / 60)} min`
+                  : `${retryAfter}s`
+              }.`
+            : "";
+        setError(
+          (detail || "Too many sign-in attempts.") + waitMsg
+        );
+      } else {
+        setError(err.response?.data?.detail || "Failed to send link");
+      }
     } finally {
       setSubmitting(false);
     }

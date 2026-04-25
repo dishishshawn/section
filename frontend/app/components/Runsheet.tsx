@@ -2,15 +2,19 @@
 
 import { useState, useEffect } from "react";
 import axios from "axios";
-import SourceBadge, { SourceRef } from "./SourceBadge";
+import SourceBadge, { ReviewedBadge, ReviewMeta, SourceRef } from "./SourceBadge";
+import EditableFact from "./EditableFact";
+import EmptyState from "./EmptyState";
 
 interface ChainItem {
+  instrument_id: number;
   instrument_type: string;
   grantor: string;
   grantee: string;
   date: string;
   status: "complete" | "missing" | "flagged";
   source: SourceRef | null;
+  reviewed: Record<string, ReviewMeta>;
 }
 
 interface Gap {
@@ -38,20 +42,19 @@ export default function Runsheet({ projectId }: { projectId: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchRunsheet = async () => {
-      try {
-        setLoading(true);
-        const res = await axios.get(`${API_URL}/projects/${projectId}/runsheet`);
-        setData(res.data);
-      } catch (err: any) {
-        setError(err.response?.data?.detail || "Failed to load runsheet");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchRunsheet();
-  }, [projectId]);
+  const fetchRunsheet = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${API_URL}/projects/${projectId}/runsheet`);
+      setData(res.data);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to load runsheet");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchRunsheet(); }, [projectId]);
 
   if (loading) {
     return (
@@ -76,7 +79,7 @@ export default function Runsheet({ projectId }: { projectId: number }) {
       {isEmpty ? (
         <EmptyState
           title="No instruments of record"
-          body="Upload deeds, leases, or assignments in the Documents tab to build the chain of title."
+          description="Upload a document to see instruments — Section will build the chain of title automatically."
         />
       ) : (
         <>
@@ -107,12 +110,37 @@ export default function Runsheet({ projectId }: { projectId: number }) {
                         <span className="tabular text-sm text-ink-3">{item.date}</span>
                       </div>
                       <div className="text-[0.98rem] text-ink-2 leading-snug">
-                        <span className="font-medium">{item.grantor}</span>
+                        <EditableFact
+                          entityType="instrument"
+                          entityId={item.instrument_id}
+                          field="grantor"
+                          value={item.grantor}
+                          sourceQuote={item.source?.quote ?? null}
+                          reviewMeta={item.reviewed?.grantor ?? null}
+                          onSave={fetchRunsheet}
+                          renderValue={(v) => <span className="font-medium">{v}</span>}
+                        />
                         <span className="mx-2 text-accent">→</span>
-                        <span className="font-medium">{item.grantee}</span>
+                        <EditableFact
+                          entityType="instrument"
+                          entityId={item.instrument_id}
+                          field="grantee"
+                          value={item.grantee}
+                          sourceQuote={item.source?.quote ?? null}
+                          reviewMeta={item.reviewed?.grantee ?? null}
+                          onSave={fetchRunsheet}
+                          renderValue={(v) => <span className="font-medium">{v}</span>}
+                        />
                       </div>
                       <div className="mt-2 flex items-center gap-4 flex-wrap">
-                        <SourceBadge source={item.source} />
+                        {Object.keys(item.reviewed).length > 0 ? (
+                          <ReviewedBadge
+                            meta={Object.values(item.reviewed)[0]}
+                            source={item.source}
+                          />
+                        ) : (
+                          <SourceBadge source={item.source} />
+                        )}
                       </div>
                     </div>
 
@@ -218,11 +246,3 @@ function SectionHeading({
   );
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-      <div className="font-display text-xl text-ink mb-1">{title}</div>
-      <p className="text-sm text-ink-3 max-w-md mx-auto font-serif-italic">{body}</p>
-    </div>
-  );
-}

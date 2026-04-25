@@ -1,0 +1,6 @@
+Alembic migrations for Section.
+
+Run from backend/:
+  alembic upgrade head
+  alembic revision --autogenerate -m "message"
+  alembic downgrade -1

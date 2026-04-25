@@ -15,43 +15,18 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
 from facts import resolved_data
-from models import FactOverride, Instrument, Interest, Obligation, Party, User, OrgMembership, ProjectAccess, Project, Tract
+from models import FactOverride, Instrument, Interest, Obligation, Party, User, Tract
+from permissions import (
+    effective_project_role as _effective_project_role,
+    require_project_role,
+)
 
 router = APIRouter(prefix="/api", tags=["overrides"])
 
-_PROJECT_ROLE_RANK = {"owner": 3, "editor": 2, "viewer": 1}
-
-
-def _effective_project_role(db: Session, user: User, project_id: int) -> str | None:
-    """Mirror of the helper in routes.py — kept local to avoid circular import."""
-    pa = (
-        db.query(ProjectAccess)
-        .filter(ProjectAccess.user_id == user.id, ProjectAccess.project_id == project_id)
-        .first()
-    )
-    if pa:
-        return pa.role
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project or not project.org_id:
-        if project and project.created_by == user.id:
-            return "owner"
-        return None
-    m = (
-        db.query(OrgMembership)
-        .filter(OrgMembership.user_id == user.id, OrgMembership.org_id == project.org_id)
-        .first()
-    )
-    if not m:
-        return None
-    return "editor" if m.role in ("owner", "admin") else "viewer"
-
 
 def _require_editor(db: Session, user: User, project_id: int):
-    role = _effective_project_role(db, user, project_id)
-    if role is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if _PROJECT_ROLE_RANK.get(role, 0) < _PROJECT_ROLE_RANK["editor"]:
-        raise HTTPException(status_code=403, detail="Viewer role cannot edit facts")
+    """Gate PATCH endpoints: must have editor or owner role on the project."""
+    require_project_role(db, user, project_id, "editor")
 
 INSTRUMENT_FIELDS = {
     "grantor", "grantee", "lessor", "lessee",
@@ -150,8 +125,9 @@ def patch_interest_field(
     if not interest:
         raise HTTPException(status_code=404, detail="Interest not found")
     tract = db.query(Tract).filter(Tract.id == interest.tract_id).first()
-    if tract:
-        _require_editor(db, user, tract.project_id)
+    if not tract:
+        raise HTTPException(status_code=404, detail="Tract not found")
+    _require_editor(db, user, tract.project_id)
 
     # Interests store values as columns, not JSON — read the current column value
     old_value = str(getattr(interest, field_name, "")) or None

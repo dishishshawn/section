@@ -6,12 +6,14 @@ import ProjectDetail from "./ProjectDetail";
 import GlobalSearch from "./GlobalSearch";
 import OrgSwitcher from "./OrgSwitcher";
 import MembersPage from "./MembersPage";
+import EmptyState from "./EmptyState";
 
 interface Project {
   id: number;
   name: string;
   jurisdiction: string;
   created_at: string;
+  your_role?: "owner" | "editor" | "viewer" | null;
 }
 
 interface Org {
@@ -105,6 +107,16 @@ export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
     }
   };
 
+  // TODO: wire to POST /api/demo/seed-sample once the backend endpoint ships.
+  // For now this is a UI stub — surfaces a message so the user understands
+  // the feature is coming without creating a broken request.
+  const seedSampleDeed = () => {
+    setError(null);
+    setSuccess(
+      "Sample deed seeding is coming soon — the backend endpoint (POST /api/demo/seed-sample) is not yet wired up."
+    );
+  };
+
   const handleSignOut = async () => {
     try {
       await axios.post(`${API_URL}/auth/signout`, {}, { withCredentials: true });
@@ -135,7 +147,7 @@ export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
           projectName={selected.name}
           jurisdiction={selected.jurisdiction}
           orgId={currentOrg?.id ?? null}
-          yourRole="owner"
+          yourRole={selected.your_role ?? "viewer"}
           onBack={() => setSelectedProjectId(null)}
         />
       );
@@ -268,6 +280,20 @@ export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
           </div>
         )}
 
+        {success && (
+          <div className="mb-6 flex items-start gap-3 border-l-2 border-moss bg-moss-soft/40 px-4 py-3">
+            <span className="font-serif-italic text-moss mt-0.5">Note —</span>
+            <span className="text-ink-2 text-sm flex-1">{success}</span>
+            <button
+              onClick={() => setSuccess(null)}
+              className="text-ink-3 hover:text-ink text-sm"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
         {/* Project register */}
         <section>
           <div className="flex items-baseline justify-between mb-4 pb-3 rule-hairline">
@@ -283,12 +309,25 @@ export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
               <span className="font-serif-italic">Loading projects…</span>
             </div>
           ) : projects.length === 0 ? (
-            <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-              <div className="font-display text-xl text-ink mb-1">No files on the docket</div>
-              <p className="text-sm text-ink-3 font-serif-italic">
-                Open your first file above to start ingesting documents.
-              </p>
-            </div>
+            <EmptyState
+              title="No projects yet"
+              description="Open your first file above to start ingesting documents, or seed a sample deed to explore a worked example."
+              primaryAction={{
+                label: "Create your first project",
+                onClick: () => {
+                  // focus the project-name input at the top of the form
+                  const el = document.querySelector<HTMLInputElement>(
+                    'input[placeholder^="e.g."]'
+                  );
+                  el?.focus();
+                  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                },
+              }}
+              secondaryAction={{
+                label: "Try with sample deed",
+                onClick: seedSampleDeed,
+              }}
+            />
           ) : (
             <ul className="divide-y divide-line">
               {projects.map((project, idx) => (

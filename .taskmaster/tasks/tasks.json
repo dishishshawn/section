@@ -174,6 +174,105 @@
             "status": "done"
           }
         ]
+      },
+      {
+        "id": 5,
+        "title": "Test harness + first-pass coverage for critical paths",
+        "description": "Zero tests exist today. Task 4 shipped with four blockers caught post-hoc. Every future feature has the same exposure. Add pytest + frontend test runner + coverage on critical flows.",
+        "details": "Backend: add pytest, pytest-asyncio, httpx, pytest-cov to requirements.txt. conftest.py with in-memory SQLite engine + seeded user/org/project fixtures. Cover: auth magic-link request + consume, override PATCH precedence (latest-wins, null reverts), cross-org project isolation, invite accept (email-match case-insensitive, expired → 410, already-used → 409), Stripe webhook signature rejection + idempotency, export endpoint smoke. Frontend: add Vitest + React Testing Library; one Playwright smoke (sign-in → create project → upload → see runsheet). Target 60% backend line coverage, key-flow frontend only.",
+        "testStrategy": "1. Run pytest locally — all green. 2. coverage report shows >=60% on backend/routes.py, backend/override_routes.py, backend/org_routes.py, backend/billing_routes.py. 3. Vitest suite green. 4. Playwright smoke green against dev server.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 6,
+        "title": "CI pipeline (GitHub Actions) + pre-merge gates",
+        "description": "Tests without CI rot in two weeks. Task-4 blockers would have been caught. Add GitHub Actions running pytest + frontend checks on every PR.",
+        "details": ".github/workflows/ci.yml: Python 3.11 matrix, pip install requirements, run pytest with coverage. Node 20, npm ci, next build, vitest, tsc --noEmit, ruff + black --check. Trigger on pull_request and push to main. Status badge in README. Require green CI before merge (branch protection rule).",
+        "testStrategy": "1. Open a test PR with a deliberate failing test — CI must fail red. 2. Fix the test — CI goes green. 3. Confirm branch protection blocks merge on red. 4. README badge renders correctly.",
+        "priority": "high",
+        "dependencies": [5],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 7,
+        "title": "Formalize schema migrations with Alembic",
+        "description": "Ten inline CREATE TABLE blocks in main.py — no rollback, no diff review. First Postgres deploy will ship a broken migration nobody can undo.",
+        "details": "Install Alembic. alembic init migrations/. Snapshot current schema as 0001_initial. Rewrite main.py startup to run alembic upgrade head instead of inline DDL. Document alembic revision --autogenerate workflow in README. Verify migration round-trip on fresh SQLite and Postgres.",
+        "testStrategy": "1. Delete dev DB, run app, verify schema created via Alembic matches prior inline schema. 2. Generate a no-op revision with autogenerate — confirm empty. 3. Add a column via model change + autogenerate — confirm migration file is correct. 4. Downgrade works without data loss on test data.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 8,
+        "title": "Rate limit auth + invite endpoints",
+        "description": "/api/auth/request-link enables email enumeration + mailbox flooding (Resend bills you, sender reputation burns). Invite endpoint enables spam from your domain.",
+        "details": "Add slowapi (or per-IP+email SQLite token bucket for v1). Limits: 5/hour per email on magic-link request, 20/day per org on invite creation, 10/minute per IP global on auth endpoints. Surface 429 cleanly in SignIn + invite UI with retry-after messaging.",
+        "testStrategy": "1. Hit /api/auth/request-link 6x rapidly for same email — 6th returns 429. 2. Create 21 invites in a day as the same org — 21st returns 429. 3. UI shows human-readable retry message, not raw JSON error.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 9,
+        "title": "Stripe webhook hardening (idempotency + customer-id fallback + seat sync)",
+        "description": "Duplicate webhook delivery flips billing_status twice. customer.subscription.deleted without org_id in metadata is silently dropped. Seat quantity never updates when members join/leave. Customer removes 3 seats, still billed, chargebacks and churns.",
+        "details": "Add stripe_webhook_events table keyed on event.id to dedupe (skip if already processed). Fallback: when metadata.org_id is missing, look up org by stripe_customer_id. On invite-accept and member-remove, call stripe.SubscriptionItem.modify(quantity=current_member_count) inside the same DB transaction. Add admin-only 'Reconcile seats' button that re-reads membership count and pushes to Stripe.",
+        "testStrategy": "1. POST same webhook twice — second is no-op, first processes. 2. POST customer.subscription.deleted with no metadata but valid customer — org is found and updated. 3. Accept invite → Stripe quantity increments by 1. 4. Remove member → quantity decrements by 1. 5. Reconcile button on an out-of-sync org fixes it.",
+        "priority": "high",
+        "dependencies": [5],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 10,
+        "title": "Error monitoring + structured logging",
+        "description": "Today a 500 in prod is invisible — print() to stdout, no request ID, no user context. First bug report from a paying landman takes a day to reproduce.",
+        "details": "Sentry SDK on backend (FastAPI integration + release tag from git SHA) and frontend (Next.js integration, source maps uploaded on build). Replace all print() with stdlib logging + JSON formatter (or structlog). X-Request-ID middleware generating UUID, threading into Sentry tags + log context + response header. Sentry user context populated from get_current_user.",
+        "testStrategy": "1. Trigger a deliberate 500 in dev — appears in Sentry with request ID, user email, route, SQL query context. 2. Frontend JS error appears with source-mapped stack trace. 3. Every log line in JSON with request_id, user_id, route.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 11,
+        "title": "Consolidate project-role permission helpers",
+        "description": "_effective_project_role is duplicated in routes.py and override_routes.py. Task-4 review already caught one drift. Two copies drifting is how permission bugs reach production.",
+        "details": "Create backend/permissions.py. Move _effective_project_role, _user_accessible_project_ids, _require_editor, _require_project_role, _require_org_role into it. Update routes.py and override_routes.py to import. Add unit tests covering owner/admin/editor/viewer/none and the created_by fallback for legacy no-org projects.",
+        "testStrategy": "1. grep for _effective_project_role — only one definition. 2. pytest permissions_test.py — owner, admin (→editor), editor, viewer, none, created_by-fallback all return expected role. 3. Override PATCH + project GET still enforce correctly end-to-end.",
+        "priority": "medium",
+        "dependencies": [5],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 12,
+        "title": "Onboarding + empty states + sample-deed guided tour",
+        "description": "Landman signs up, sees zero projects, blank screen, bounces. Today the UI assumes you already have data. First-session activation is the #1 conversion lever.",
+        "details": "Empty-state components for: no projects (org dashboard), no documents (in project), no instruments extracted, no obligations, no audit entries, no tract map data. Each with illustration, one-sentence explainer, and primary CTA. 'Try with sample deed' seeded tract on first sign-in that walks upload → extract → edit a fact → export title opinion as a 4-step guided tour with dismissable tooltips.",
+        "testStrategy": "1. Fresh sign-up lands on dashboard with guided tour auto-started. 2. Each of 6 empty-state screens renders correctly when no data. 3. Sample deed flow completes end-to-end and produces an exported PDF. 4. Tour is dismissable and stays dismissed across sessions (stored per-user).",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 13,
+        "title": "Email deliverability (custom domain + SPF/DKIM/DMARC)",
+        "description": "EMAIL_FROM defaults to noreply@yourdomain.com. Magic links from Resend without domain auth land in spam. A landman who never gets the sign-in email never becomes a user.",
+        "details": "Verify custom sending domain in Resend. Publish SPF include, DKIM CNAME, DMARC p=quarantine in DNS. Template polish: text + HTML for magic-link and invite emails with firm branding. Resend bounce + complaint webhook → flag affected users in users table so we don't re-send to dead addresses.",
+        "testStrategy": "1. mail-tester.com on outbound magic-link scores >=9/10. 2. DMARC aggregate report shows 100% pass. 3. Bouncing a test send flips user.email_deliverable=false, skipping future sends. 4. HTML email renders correctly in Gmail, Outlook, Apple Mail.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": []
       }
     ],
     "metadata": {

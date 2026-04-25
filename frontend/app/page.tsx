@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import ProjectShell from "./components/ProjectShell";
 import SignIn from "./components/SignIn";
+import GuidedTour from "./components/GuidedTour";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -27,12 +28,6 @@ export default function Home() {
 
   useEffect(() => {
     checkSession();
-    // Resume pending invite after sign-in redirect
-    const pendingToken = sessionStorage.getItem("pending_invite_token");
-    if (pendingToken) {
-      sessionStorage.removeItem("pending_invite_token");
-      window.location.href = `/invite/${pendingToken}`;
-    }
   }, []);
 
   if (me === "loading") {
@@ -47,5 +42,11 @@ export default function Home() {
     return <SignIn onSignedIn={checkSession} />;
   }
 
-  return <ProjectShell me={me} onSignOut={() => setMe(null)} />;
+  return (
+    <>
+      <ProjectShell me={me} onSignOut={() => setMe(null)} />
+      {/* First-session guided tour; persists dismissal per-user in localStorage */}
+      <GuidedTour userKey={me.id} />
+    </>
+  );
 }

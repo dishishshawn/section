@@ -16,6 +16,13 @@ from extractors import process_document
 from facts import resolved_data, get_provenance
 from str_parser import parse_legal_description, parsed_to_dict, section_grid_position
 from auth import get_current_user
+from permissions import (
+    effective_project_role as _effective_project_role,
+    user_accessible_project_ids as _user_accessible_project_ids_set,
+    require_project_role as _require_project_role_helper,
+    PROJECT_ROLE_RANK as _PROJECT_ROLE_RANK,
+    ORG_ROLE_RANK as _ORG_ROLE_RANK,
+)
 
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -23,88 +30,18 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 router = APIRouter(prefix="/api", tags=["api"])
 
 # ---------------------------------------------------------------------------
-# Row-level authorization helpers (imported here to avoid circular imports)
+# Row-level authorization helpers — consolidated in `permissions.py`.
+# These thin wrappers preserve call-site signatures used throughout this file.
 # ---------------------------------------------------------------------------
-
-_PROJECT_ROLE_RANK = {"owner": 3, "editor": 2, "viewer": 1}
-_ORG_ROLE_RANK = {"owner": 3, "admin": 2, "member": 1}
-
-
-def _effective_project_role(db: Session, user: User, project_id: int) -> str | None:
-    """Return the caller's effective role on the project, or None if no access."""
-    pa = (
-        db.query(ProjectAccess)
-        .filter(
-            ProjectAccess.user_id == user.id,
-            ProjectAccess.project_id == project_id,
-        )
-        .first()
-    )
-    if pa:
-        return pa.role
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project or not project.org_id:
-        # Legacy projects without org: allow creator through
-        if project and project.created_by == user.id:
-            return "owner"
-        return None
-    m = (
-        db.query(OrgMembership)
-        .filter(OrgMembership.user_id == user.id, OrgMembership.org_id == project.org_id)
-        .first()
-    )
-    if not m:
-        return None
-    if m.role in ("owner", "admin"):
-        return "editor"
-    return "viewer"
 
 
 def _require_project_role(db: Session, user: User, project_id: int, min_role: str = "viewer"):
-    role = _effective_project_role(db, user, project_id)
-    if role is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if _PROJECT_ROLE_RANK.get(role, 0) < _PROJECT_ROLE_RANK.get(min_role, 0):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Requires '{min_role}' access on this project",
-        )
-    return role
+    return _require_project_role_helper(db, user, project_id, min_role)
 
 
 def _user_accessible_project_ids(db: Session, user: User) -> list[int]:
-    """Return all project IDs the user can see."""
-    # Projects via explicit ProjectAccess
-    explicit_ids = [
-        r[0]
-        for r in db.query(ProjectAccess.project_id)
-        .filter(ProjectAccess.user_id == user.id)
-        .all()
-    ]
-
-    # Projects in orgs the user belongs to
-    org_ids = [
-        r[0]
-        for r in db.query(OrgMembership.org_id)
-        .filter(OrgMembership.user_id == user.id)
-        .all()
-    ]
-    org_project_ids = [
-        r[0]
-        for r in db.query(Project.id)
-        .filter(Project.org_id.in_(org_ids))
-        .all()
-    ] if org_ids else []
-
-    # Projects the user created (legacy, no org)
-    created_ids = [
-        r[0]
-        for r in db.query(Project.id)
-        .filter(Project.created_by == user.id)
-        .all()
-    ]
-
-    return list(set(explicit_ids + org_project_ids + created_ids))
+    """Return all project IDs the user can see (list form for legacy callers)."""
+    return list(_user_accessible_project_ids_set(db, user))
 
 class ProjectCreate(BaseModel):
     name: str
@@ -149,7 +86,7 @@ def create_project(
     pa = ProjectAccess(
         user_id=user.id,
         project_id=db_project.id,
-        org_id=project.org_id or 0,
+        org_id=project.org_id,  # None for personal projects (column is nullable)
         role="owner",
         granted_by=user.id,
     )
@@ -178,7 +115,16 @@ def list_projects(
         if not accessible_ids:
             return []
         projects = db.query(Project).filter(Project.id.in_(accessible_ids)).all()
-        return [{"id": p.id, "name": p.name, "jurisdiction": p.jurisdiction, "created_at": p.created_at.isoformat()} for p in projects]
+        return [
+            {
+                "id": p.id,
+                "name": p.name,
+                "jurisdiction": p.jurisdiction,
+                "created_at": p.created_at.isoformat(),
+                "your_role": _effective_project_role(db, user, p.id),
+            }
+            for p in projects
+        ]
     except Exception as e:
         import traceback
         print(f"ERROR in list_projects: {e}")
