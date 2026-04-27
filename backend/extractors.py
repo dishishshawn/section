@@ -109,6 +109,18 @@ The document text is segmented with [PAGE N] markers — one per page. For
 source_pages, return the integer N of the page where each quote appears. If a
 field spans multiple pages, return the page where the supporting quote starts.
 
+Rules for the FIELD VALUES (lessor, lessee, legal_description, etc.):
+- NEVER return a form label as a value. If the only thing visible is a heading
+  like "Lessor:", "Original Lessee:", "Recording Information:", or
+  "Lease Date:" with no nearby content, return null for that field.
+- NEVER bleed multiple fields into one value. If a lessor's name is followed
+  by another label (e.g. "...C. Boyd Finch  Lease Date: 6/24/2009..."), stop
+  the lessor value before that label. The value should contain ONLY the answer
+  to its own field.
+- Two-column form layouts often appear in extracted text as a column of bare
+  labels followed (much later) by a column of values. If you cannot confidently
+  match a label to its value, return null rather than guessing.
+
 For source_quotes:
 - Return the SUBSTANTIVE clause that contains the actual answer, NOT a heading
   or label. Bad: "Lessor:" or "Original Lessee:". Good: the full sentence or
@@ -156,6 +168,16 @@ Return ONLY a JSON object with these keys (use null for missing fields):
 
 The document text is segmented with [PAGE N] markers — one per page. For
 source_pages, return the integer N where each quote appears.
+
+Rules for the FIELD VALUES (grantor, grantee, legal_description, etc.):
+- NEVER return a form label as a value. If the only thing visible is a heading
+  like "Grantor:", "Grantee:", or "Date:" with no nearby content, return null
+  for that field.
+- NEVER bleed multiple fields into one value. If a grantor's name is followed
+  by another label (e.g. "...John Smith  Date: 6/24/2009..."), stop the value
+  before that label. The value should contain ONLY the answer to its own field.
+- If you cannot confidently match a label to its value, return null rather than
+  guessing.
 
 For source_quotes:
 - Return the SUBSTANTIVE clause that contains the actual answer, NOT a heading
@@ -358,6 +380,90 @@ def _call_claude(prompt: str, text: str) -> Optional[dict]:
     return None
 
 
+# Form labels that the model sometimes returns verbatim (as a value) or that
+# bleed into the end of a real value when two-column form layouts collapse during
+# PDF text extraction. Used to drop label-only values and truncate field bleed.
+# Keep this list narrow: tokens here must be unambiguous form labels, not words
+# that legitimately appear inside a value (e.g. "Section", "Block", "County",
+# "Volume", "Page" all show up inside legal descriptions and are excluded).
+_FORM_LABELS = (
+    "Lessor",
+    "Lessee",
+    "Original Lessee",
+    "Recording Information",
+    "Recording Info",
+    "Lease Date",
+    "Leaso Date",  # common OCR noise for "Lease Date"
+    "Effective Date",
+    "Recording Date",
+    "Primary Term",
+    "Royalty",
+    "Bonus",
+    "Grantor",
+    "Grantee",
+    "Assignor",
+    "Assignee",
+    "EOG Lease Number",
+    "Lease Number",
+    "Unit Plat Number",
+    "Land Part",
+)
+
+_LABEL_BOUNDARY_RE = re.compile(
+    r"(?:^|\s+)(?:" + "|".join(re.escape(t) for t in _FORM_LABELS) + r")\s*:",
+    re.IGNORECASE,
+)
+
+_LABEL_ONLY_VALUES = frozenset(t.lower() for t in _FORM_LABELS)
+
+
+def _sanitize_field(value: Optional[str]) -> Optional[str]:
+    # Drop label-only values and truncate field bleed (e.g. a lessor name
+    # followed by "Lease Date: 6/24/2009"). Returns None if the cleaned value
+    # is empty or matches a known form label.
+    if not isinstance(value, str):
+        return value
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+
+    match = _LABEL_BOUNDARY_RE.search(cleaned)
+    if match:
+        cleaned = cleaned[:match.start()].rstrip(" ,;-")
+
+    bare = cleaned.rstrip(":").strip()
+    if not bare:
+        return None
+    if bare.lower() in _LABEL_ONLY_VALUES:
+        return None
+    if cleaned.endswith(":") and " " not in bare:
+        # Single-token value ending in colon is almost certainly a stray label.
+        return None
+    return cleaned
+
+
+def _sanitize_lease(le: LeaseExtraction) -> LeaseExtraction:
+    le.lessor = _sanitize_field(le.lessor)
+    le.lessee = _sanitize_field(le.lessee)
+    le.legal_description = _sanitize_field(le.legal_description)
+    le.royalty = _sanitize_field(le.royalty)
+    le.primary_term = _sanitize_field(le.primary_term)
+    le.depth_limits = _sanitize_field(le.depth_limits)
+    le.shut_in = _sanitize_field(le.shut_in)
+    le.continuous_drilling = _sanitize_field(le.continuous_drilling)
+    return le
+
+
+def _sanitize_deed(de: DeedExtraction) -> DeedExtraction:
+    de.grantor = _sanitize_field(de.grantor)
+    de.grantee = _sanitize_field(de.grantee)
+    de.legal_description = _sanitize_field(de.legal_description)
+    de.interest_conveyed = _sanitize_field(de.interest_conveyed)
+    de.mineral_estate = _sanitize_field(de.mineral_estate)
+    de.recording_info = _sanitize_field(de.recording_info)
+    return de
+
+
 def _regex_lease_fallback(text: str) -> LeaseExtraction:
     def grab(pattern: str, flags=re.IGNORECASE) -> Optional[str]:
         m = re.search(pattern, text, flags)
@@ -436,15 +542,19 @@ def _regex_deed_fallback(text: str) -> DeedExtraction:
 def extract_lease(text: str) -> LeaseExtraction:
     data = _call_claude(LEASE_PROMPT, text)
     if data:
-        return LeaseExtraction(**{k: v for k, v in data.items() if k in LeaseExtraction.model_fields})
-    return _regex_lease_fallback(text)
+        lease = LeaseExtraction(**{k: v for k, v in data.items() if k in LeaseExtraction.model_fields})
+    else:
+        lease = _regex_lease_fallback(text)
+    return _sanitize_lease(lease)
 
 
 def extract_deed(text: str) -> DeedExtraction:
     data = _call_claude(DEED_PROMPT, text)
     if data:
-        return DeedExtraction(**{k: v for k, v in data.items() if k in DeedExtraction.model_fields})
-    return _regex_deed_fallback(text)
+        deed = DeedExtraction(**{k: v for k, v in data.items() if k in DeedExtraction.model_fields})
+    else:
+        deed = _regex_deed_fallback(text)
+    return _sanitize_deed(deed)
 
 
 def _get_or_create_party(db: Session, project_id: int, name: str, ptype: str = "entity") -> Party:
@@ -640,6 +750,15 @@ Return ONLY a JSON object with these keys (use null for missing):
 The document text is segmented with [PAGE N] markers — one per page. For
 source_pages, return the integer N where each quote appears.
 
+Rules for the FIELD VALUES (grantor, grantee, legal_description, etc.):
+- NEVER return a form label as a value. If the only thing visible is a heading
+  like "Assignor:", "Assignee:", or "Date:" with no nearby content, return
+  null for that field.
+- NEVER bleed multiple fields into one value. If a party's name is followed by
+  another label, stop the value before that label.
+- If you cannot confidently match a label to its value, return null rather than
+  guessing.
+
 For source_quotes:
 - Return the SUBSTANTIVE clause that contains the actual answer, NOT a heading
   or label. Bad: "Grantor:" or "Date:". Good: the full phrase identifying the
@@ -657,8 +776,10 @@ Document:
 def extract_assignment(text: str) -> DeedExtraction:
     data = _call_claude(ASSIGNMENT_PROMPT, text)
     if data:
-        return DeedExtraction(**{k: v for k, v in data.items() if k in DeedExtraction.model_fields})
-    return _regex_deed_fallback(text)
+        assignment = DeedExtraction(**{k: v for k, v in data.items() if k in DeedExtraction.model_fields})
+    else:
+        assignment = _regex_deed_fallback(text)
+    return _sanitize_deed(assignment)
 
 
 def materialize_assignment(db: Session, project_id: int, document_id: int, assignment: DeedExtraction) -> None:
