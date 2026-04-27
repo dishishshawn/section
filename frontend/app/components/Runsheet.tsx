@@ -1,16 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import SourceBadge, { SourceRef } from "./SourceBadge";
+import SourceBadge, { ReviewedBadge, ReviewMeta, SourceRef } from "./SourceBadge";
+import EditableFact from "./EditableFact";
+import EmptyState from "./EmptyState";
 
 interface ChainItem {
+  instrument_id: number;
   instrument_type: string;
   grantor: string;
   grantee: string;
   date: string;
   status: "complete" | "missing" | "flagged";
   source: SourceRef | null;
+  reviewed: Record<string, ReviewMeta>;
 }
 
 interface Gap {
@@ -33,25 +37,44 @@ const STATUS = {
   missing: { label: "Incomplete", class: "text-rust", italics: true },
 } as const;
 
-export default function Runsheet({ projectId }: { projectId: number }) {
+export default function Runsheet({ projectId, highlight }: { projectId: number; highlight?: string | null }) {
   const [data, setData] = useState<RunsheetData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const rowRefs = useRef<Record<number, HTMLLIElement | null>>({});
+  const [flashIdx, setFlashIdx] = useState<number | null>(null);
+
+  const matchIdx = (() => {
+    if (!highlight || !data?.chain?.length) return -1;
+    const needle = highlight.toLowerCase();
+    return data.chain.findIndex(
+      (c) => c.grantor?.toLowerCase().includes(needle) || c.grantee?.toLowerCase().includes(needle)
+    );
+  })();
 
   useEffect(() => {
-    const fetchRunsheet = async () => {
-      try {
-        setLoading(true);
-        const res = await axios.get(`${API_URL}/projects/${projectId}/runsheet`);
-        setData(res.data);
-      } catch (err: any) {
-        setError(err.response?.data?.detail || "Failed to load runsheet");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchRunsheet();
-  }, [projectId]);
+    if (matchIdx < 0) return;
+    const el = rowRefs.current[matchIdx];
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashIdx(matchIdx);
+    const t = setTimeout(() => setFlashIdx(null), 2200);
+    return () => clearTimeout(t);
+  }, [matchIdx, data]);
+
+  const fetchRunsheet = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${API_URL}/projects/${projectId}/runsheet`);
+      setData(res.data);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to load runsheet");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchRunsheet(); }, [projectId]);
 
   if (loading) {
     return (
@@ -76,7 +99,7 @@ export default function Runsheet({ projectId }: { projectId: number }) {
       {isEmpty ? (
         <EmptyState
           title="No instruments of record"
-          body="Upload deeds, leases, or assignments in the Documents tab to build the chain of title."
+          description="Upload a document to see instruments — Section will build the chain of title automatically."
         />
       ) : (
         <>
@@ -89,7 +112,10 @@ export default function Runsheet({ projectId }: { projectId: number }) {
                 return (
                   <li
                     key={idx}
-                    className="grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 items-baseline py-5 border-b border-line last:border-b-0 group"
+                    ref={(el) => { rowRefs.current[idx] = el; }}
+                    className={`grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 items-baseline py-5 border-b border-line last:border-b-0 group transition-colors duration-700 ${
+                      flashIdx === idx ? "bg-accent-tint" : ""
+                    }`}
                   >
                     {/* Entry number */}
                     <div className="text-right">
@@ -107,12 +133,37 @@ export default function Runsheet({ projectId }: { projectId: number }) {
                         <span className="tabular text-sm text-ink-3">{item.date}</span>
                       </div>
                       <div className="text-[0.98rem] text-ink-2 leading-snug">
-                        <span className="font-medium">{item.grantor}</span>
+                        <EditableFact
+                          entityType="instrument"
+                          entityId={item.instrument_id}
+                          field="grantor"
+                          value={item.grantor}
+                          sourceQuote={item.source?.quote ?? null}
+                          reviewMeta={item.reviewed?.grantor ?? null}
+                          onSave={fetchRunsheet}
+                          renderValue={(v) => <span className="font-medium">{v}</span>}
+                        />
                         <span className="mx-2 text-accent">→</span>
-                        <span className="font-medium">{item.grantee}</span>
+                        <EditableFact
+                          entityType="instrument"
+                          entityId={item.instrument_id}
+                          field="grantee"
+                          value={item.grantee}
+                          sourceQuote={item.source?.quote ?? null}
+                          reviewMeta={item.reviewed?.grantee ?? null}
+                          onSave={fetchRunsheet}
+                          renderValue={(v) => <span className="font-medium">{v}</span>}
+                        />
                       </div>
                       <div className="mt-2 flex items-center gap-4 flex-wrap">
-                        <SourceBadge source={item.source} />
+                        {Object.keys(item.reviewed).length > 0 ? (
+                          <ReviewedBadge
+                            meta={Object.values(item.reviewed)[0]}
+                            source={item.source}
+                          />
+                        ) : (
+                          <SourceBadge source={item.source} />
+                        )}
                       </div>
                     </div>
 
@@ -218,11 +269,3 @@ function SectionHeading({
   );
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-      <div className="font-display text-xl text-ink mb-1">{title}</div>
-      <p className="text-sm text-ink-3 max-w-md mx-auto font-serif-italic">{body}</p>
-    </div>
-  );
-}

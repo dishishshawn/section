@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from "react";
 import axios from "axios";
-import SourceBadge, { SourceRef } from "./SourceBadge";
+import SourceBadge, { ReviewedBadge, ReviewMeta, SourceRef } from "./SourceBadge";
+import EditableFact from "./EditableFact";
+import EmptyState from "./EmptyState";
 
 interface Obligation {
   id: number;
@@ -12,6 +14,7 @@ interface Obligation {
   priority: "high" | "medium" | "low";
   description: string;
   source: SourceRef | null;
+  reviewed: Record<string, ReviewMeta>;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -46,20 +49,19 @@ export default function ObligationCalendar({ projectId }: { projectId: number })
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchObligations = async () => {
-      try {
-        setLoading(true);
-        const res = await axios.get(`${API_URL}/projects/${projectId}/obligations`);
-        setObligations(res.data.obligations || []);
-      } catch (err: any) {
-        setError(err.response?.data?.detail || "Failed to load obligations");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchObligations();
-  }, [projectId]);
+  const fetchObligations = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${API_URL}/projects/${projectId}/obligations`);
+      setObligations(res.data.obligations || []);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to load obligations");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchObligations(); }, [projectId]);
 
   if (loading) {
     return (
@@ -87,12 +89,10 @@ export default function ObligationCalendar({ projectId }: { projectId: number })
     return (
       <div className="px-10 py-12">
         {heading}
-        <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-          <div className="font-display text-xl text-ink mb-1">Nothing on the calendar</div>
-          <p className="text-sm text-ink-3 max-w-md mx-auto font-serif-italic">
-            Upload leases in the Documents tab to track term expirations and payments.
-          </p>
-        </div>
+        <EmptyState
+          title="No obligations extracted from this project"
+          description="Upload leases in the Documents tab — Section will track term expirations, rentals, and drilling deadlines."
+        />
       </div>
     );
   }
@@ -132,13 +132,32 @@ export default function ObligationCalendar({ projectId }: { projectId: number })
                     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-6 items-baseline">
                       <div className="min-w-0">
                         <div className="font-display text-[1.2rem] font-medium text-ink leading-tight">
-                          {formatType(obl.type)}
+                          <EditableFact
+                            entityType="obligation"
+                            entityId={obl.id}
+                            field="type"
+                            value={formatType(obl.type)}
+                            reviewMeta={obl.reviewed?.type ?? null}
+                            onSave={fetchObligations}
+                          />
                         </div>
                         <p className="mt-1 text-[0.98rem] text-ink-2 leading-snug">
-                          {obl.description}
+                          <EditableFact
+                            entityType="obligation"
+                            entityId={obl.id}
+                            field="description"
+                            value={obl.description}
+                            sourceQuote={obl.source?.quote ?? null}
+                            reviewMeta={obl.reviewed?.description ?? null}
+                            onSave={fetchObligations}
+                          />
                         </p>
                         <div className="mt-2">
-                          <SourceBadge source={obl.source} />
+                          {Object.keys(obl.reviewed || {}).length > 0 ? (
+                            <ReviewedBadge meta={Object.values(obl.reviewed)[0]} source={obl.source} />
+                          ) : (
+                            <SourceBadge source={obl.source} />
+                          )}
                         </div>
                       </div>
                       <div className="text-right">

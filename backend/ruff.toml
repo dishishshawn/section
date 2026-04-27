@@ -1,0 +1,24 @@
+line-length = 120
+target-version = "py311"
+
+extend-exclude = [
+    "venv",
+    ".venv",
+    "__pycache__",
+    "uploads",
+    "tests/__pycache__",
+]
+
+[lint]
+# Keep it minimal — just pyflakes + a subset of pycodestyle errors.
+# We can tighten over time. The goal of CI lint is to catch obvious breakage,
+# not to nitpick existing code.
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # line length (handled by black-compatible formatter only)
+    "E402",  # module-level import not at top (FastAPI apps legitimately do this)
+    "E722",  # bare except (pre-existing patterns)
+    "F401",  # unused imports (many re-exports / conditional imports)
+    "F841",  # unused locals (common in exploratory code paths)
+    "W605",  # invalid escape sequence
+]

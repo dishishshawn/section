@@ -1,29 +1,46 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Runsheet from "./Runsheet";
+import type { SearchTarget } from "./GlobalSearch";
 import OwnershipView from "./OwnershipView";
 import ObligationCalendar from "./ObligationCalendar";
 import RiskDashboard from "./RiskDashboard";
 import DocumentUpload from "./DocumentUpload";
 import ExportButton from "./ExportButton";
+import AuditDrawer from "./AuditDrawer";
+import TractMap from "./TractMap";
+import ShareMenu from "./ShareMenu";
 
-type ViewType = "documents" | "runsheet" | "ownership" | "calendar" | "risk";
+type ViewType = "documents" | "runsheet" | "ownership" | "map" | "calendar" | "risk";
 
 interface ProjectDetailProps {
   projectId: number;
   projectName: string;
   jurisdiction: string;
+  orgId: number | null;
+  yourRole: string;
+  searchTarget?: SearchTarget;
   onBack: () => void;
 }
 
-export default function ProjectDetail({ projectId, projectName, jurisdiction, onBack }: ProjectDetailProps) {
-  const [currentView, setCurrentView] = useState<ViewType>("documents");
+export default function ProjectDetail({ projectId, projectName, jurisdiction, orgId, yourRole, searchTarget, onBack }: ProjectDetailProps) {
+  const [currentView, setCurrentView] = useState<ViewType>(searchTarget?.view ?? "documents");
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [highlight, setHighlight] = useState<string | null>(searchTarget?.highlight ?? null);
+
+  useEffect(() => {
+    if (searchTarget) {
+      setCurrentView(searchTarget.view);
+      setHighlight(searchTarget.highlight);
+    }
+  }, [searchTarget]);
 
   const views: { id: ViewType; label: string }[] = [
     { id: "documents", label: "Documents" },
     { id: "runsheet", label: "Runsheet" },
     { id: "ownership", label: "Ownership" },
+    { id: "map", label: "Tract map" },
     { id: "calendar", label: "Obligations" },
     { id: "risk", label: "Risk" },
   ];
@@ -52,10 +69,6 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction, on
               </h1>
               <div className="mt-3 flex items-center flex-wrap gap-x-5 gap-y-1 text-sm text-ink-2">
                 <span className="font-serif-italic">{jurisdiction}</span>
-                <span className="text-line-strong">·</span>
-                <span className="tabular text-ink-3">
-                  No. {String(projectId).padStart(4, "0")}
-                </span>
               </div>
             </div>
           </div>
@@ -77,7 +90,10 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction, on
                 return (
                   <button
                     key={view.id}
-                    onClick={() => setCurrentView(view.id)}
+                    onClick={() => {
+                      setCurrentView(view.id);
+                      setHighlight(null);
+                    }}
                     className={`relative px-5 py-4 text-[0.95rem] transition-colors ${
                       active
                         ? "text-ink font-medium"
@@ -92,7 +108,14 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction, on
                 );
               })}
             </nav>
-            <div className="flex-shrink-0 py-2.5">
+            <div className="flex-shrink-0 py-2.5 flex items-center gap-3">
+              <button
+                onClick={() => setAuditOpen(true)}
+                className="text-sm font-serif-italic text-ink-3 hover:text-ink transition-colors"
+              >
+                Audit trail
+              </button>
+              <ShareMenu projectId={projectId} orgId={orgId} yourRole={yourRole} />
               <ExportButton projectId={projectId} projectName={projectName} />
             </div>
           </div>
@@ -100,12 +123,19 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction, on
       </div>
 
       <main className="max-w-6xl mx-auto">
-        {currentView === "documents" && <DocumentUpload projectId={projectId} />}
-        {currentView === "runsheet" && <Runsheet projectId={projectId} />}
+        {currentView === "documents" && <DocumentUpload projectId={projectId} highlight={highlight} />}
+        {currentView === "runsheet" && <Runsheet projectId={projectId} highlight={highlight} />}
         {currentView === "ownership" && <OwnershipView projectId={projectId} />}
         {currentView === "calendar" && <ObligationCalendar projectId={projectId} />}
+        {currentView === "map" && <TractMap projectId={projectId} />}
         {currentView === "risk" && <RiskDashboard projectId={projectId} />}
       </main>
+
+      <AuditDrawer
+        projectId={projectId}
+        open={auditOpen}
+        onClose={() => setAuditOpen(false)}
+      />
     </div>
   );
 }

@@ -49,6 +49,7 @@ class LeaseExtraction(BaseModel):
     recording_date: Optional[str] = None
     effective_date: Optional[str] = None
     source_quotes: Optional[dict] = None
+    source_pages: Optional[dict] = None
 
 
 class DeedExtraction(BaseModel):
@@ -63,6 +64,7 @@ class DeedExtraction(BaseModel):
     date: Optional[str] = None
     recording_info: Optional[str] = None
     source_quotes: Optional[dict] = None
+    source_pages: Optional[dict] = None
 
 
 LEASE_PROMPT = """You are an expert oil & gas landman extracting structured data from a lease.
@@ -84,19 +86,40 @@ Return ONLY a JSON object with these keys (use null for missing fields):
   "recording_date": string (YYYY-MM-DD),
   "effective_date": string (YYYY-MM-DD),
   "source_quotes": {
-    "lessor": string (VERBATIM excerpt from document supporting lessor, max 200 chars),
+    "lessor": string (excerpt from document supporting lessor, max 200 chars),
     "lessee": string,
     "legal_description": string,
     "gross_acres": string,
     "royalty": string,
     "primary_term": string,
     "effective_date": string
+  },
+  "source_pages": {
+    "lessor": integer (page number where the lessor quote appears),
+    "lessee": integer,
+    "legal_description": integer,
+    "gross_acres": integer,
+    "royalty": integer,
+    "primary_term": integer,
+    "effective_date": integer
   }
 }
 
-For source_quotes, return the exact text span from the document that supports each
-extracted field. Copy verbatim — do not paraphrase. This is for audit trail so a
-landman can verify against the source.
+The document text is segmented with [PAGE N] markers — one per page. For
+source_pages, return the integer N of the page where each quote appears. If a
+field spans multiple pages, return the page where the supporting quote starts.
+
+For source_quotes:
+- Return the SUBSTANTIVE clause that contains the actual answer, NOT a heading
+  or label. Bad: "Lessor:" or "Original Lessee:". Good: the full sentence or
+  phrase identifying the lessor by name (e.g., "...the Commissioner of the
+  General Land Office of the State of Texas...").
+- The quote must, on its own, justify the field value to a reader who has not
+  seen the rest of the document.
+- Prefer verbatim. Minor OCR noise is acceptable. NEVER return null when the
+  corresponding field has a value.
+- Aim for 60-200 characters. A two-word fragment is unacceptable unless that
+  fragment IS the answer.
 
 Document:
 """
@@ -116,19 +139,74 @@ Return ONLY a JSON object with these keys (use null for missing fields):
   "date": string (YYYY-MM-DD),
   "recording_info": string,
   "source_quotes": {
-    "grantor": string (VERBATIM excerpt from document, max 200 chars),
+    "grantor": string (excerpt from document, max 200 chars),
     "grantee": string,
     "legal_description": string,
     "interest_conveyed": string,
     "date": string
+  },
+  "source_pages": {
+    "grantor": integer,
+    "grantee": integer,
+    "legal_description": integer,
+    "interest_conveyed": integer,
+    "date": integer
   }
 }
 
-For source_quotes, return the exact text span from the document that supports each
-extracted field. Copy verbatim — do not paraphrase.
+The document text is segmented with [PAGE N] markers — one per page. For
+source_pages, return the integer N where each quote appears.
+
+For source_quotes:
+- Return the SUBSTANTIVE clause that contains the actual answer, NOT a heading
+  or label. Bad: "Grantor:" or "Date:". Good: the full phrase identifying the
+  party by name or stating the date inline.
+- The quote must, on its own, justify the field value.
+- Prefer verbatim; minor OCR noise is acceptable. NEVER return null when the
+  corresponding field has a value.
+- Aim for 60-200 characters. A two-word fragment is unacceptable unless that
+  fragment IS the answer.
 
 Document:
 """
+
+
+def _ocr_pdf_text(path: Path) -> str:
+    # OCR fallback for scanned/image-only PDFs. Renders each page with pypdfium2
+    # and runs Tesseract via pytesseract. Requires the Tesseract binary on PATH
+    # (TESSERACT_CMD env var overrides). Disable entirely with ENABLE_OCR=0.
+    if os.getenv("ENABLE_OCR", "1") == "0":
+        return ""
+    try:
+        import pypdfium2 as pdfium
+        import pytesseract
+        from PIL import Image  # noqa: F401  (ensures Pillow present)
+    except ImportError:
+        return ""
+
+    tesseract_cmd = os.getenv("TESSERACT_CMD")
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+    dpi = int(os.getenv("OCR_DPI", "200"))
+    scale = dpi / 72.0
+    max_pages = int(os.getenv("OCR_MAX_PAGES", "50"))
+
+    pages_out = []
+    pdf = pdfium.PdfDocument(str(path))
+    try:
+        for i, page in enumerate(pdf):
+            if i >= max_pages:
+                break
+            pil_image = page.render(scale=scale).to_pil()
+            try:
+                page_text = pytesseract.image_to_string(pil_image) or ""
+            finally:
+                pil_image.close()
+            pages_out.append(f"[PAGE {i + 1}]\n{page_text.strip()}")
+    finally:
+        pdf.close()
+    return "\n\n".join(pages_out).strip()
 
 
 def extract_pdf_text(path: Path) -> str:
@@ -136,7 +214,10 @@ def extract_pdf_text(path: Path) -> str:
         from pypdf import PdfReader
         reader = PdfReader(str(path))
 
-        pages_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        pages_text = "\n\n".join(
+            f"[PAGE {idx + 1}]\n{(page.extract_text() or '').strip()}"
+            for idx, page in enumerate(reader.pages)
+        )
 
         fields = reader.get_fields() or {}
         filled_fields = []
@@ -159,6 +240,16 @@ def extract_pdf_text(path: Path) -> str:
         meaningful_text = "".join(c for c in pages_text if not c.isspace())
         if meaningful_text:
             parts.append("DOCUMENT TEXT:\n" + pages_text)
+
+        # Scanned PDF: no embedded text and no AcroForm. Fall back to OCR.
+        if not parts and not fields:
+            try:
+                ocr_text = _ocr_pdf_text(path)
+            except Exception as e:
+                return f"[PDF extraction failed: OCR error: {e}]"
+            if ocr_text:
+                parts.append("DOCUMENT TEXT (OCR):\n" + ocr_text)
+
         return "\n\n".join(parts) if parts else ""
     except Exception as e:
         return f"[PDF extraction failed: {e}]"
@@ -227,19 +318,31 @@ def _extract_json_from_response(content: str) -> Optional[dict]:
         return None
 
 
+_OCR_LENIENCE_NOTE = (
+    "\nNOTE: The document text below was produced by OCR and may contain "
+    "artifacts (broken words, line breaks, mis-recognized characters, "
+    "extra spacing). Quote the closest matching span — minor OCR noise is "
+    "acceptable and expected. Do NOT return null for a source_quote just "
+    "because the OCR text is imperfect. The [PAGE N] markers are reliable "
+    "and should still be used for source_pages.\n"
+)
+
+
 def _call_claude(prompt: str, text: str) -> Optional[dict]:
     client = _get_client()
     if client is None:
         _log("Claude client not configured (ANTHROPIC_API_KEY missing/placeholder)")
         return None
+    is_ocr = "DOCUMENT TEXT (OCR):" in text[:200]
+    effective_prompt = prompt + (_OCR_LENIENCE_NOTE if is_ocr else "")
     try:
-        _log(f"calling Claude model={CLAUDE_MODEL} base={os.getenv('ANTHROPIC_BASE_URL') or 'default'}")
+        _log(f"calling Claude model={CLAUDE_MODEL} base={os.getenv('ANTHROPIC_BASE_URL') or 'default'} ocr={is_ocr}")
         response = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=2000,
             system="You are a JSON-only extraction tool. Respond with ONLY a valid JSON object. No prose, no markdown fences, no explanations.",
             messages=[
-                {"role": "user", "content": prompt + text[:20000]},
+                {"role": "user", "content": effective_prompt + text[:20000]},
                 {"role": "assistant", "content": "{"},
             ],
         )
@@ -411,6 +514,7 @@ def materialize_lease(db: Session, project_id: int, document_id: int, lease: Lea
             "pugh_clauses": lease.pugh_clauses,
             "depth_limits": lease.depth_limits,
             "source_quotes": lease.source_quotes or {},
+            "source_pages": lease.source_pages or {},
         },
     )
     db.add(inst)
@@ -480,6 +584,7 @@ def materialize_deed(db: Session, project_id: int, document_id: int, deed: DeedE
             "reservations": deed.reservations,
             "mineral_estate": deed.mineral_estate,
             "source_quotes": deed.source_quotes or {},
+            "source_pages": deed.source_pages or {},
         },
     ))
 
@@ -519,15 +624,31 @@ Return ONLY a JSON object with these keys (use null for missing):
   "date": string (YYYY-MM-DD, the effective date),
   "recording_info": string,
   "source_quotes": {
-    "grantor": string (VERBATIM excerpt from document, max 200 chars),
+    "grantor": string (excerpt from document, max 200 chars),
     "grantee": string,
     "legal_description": string,
     "date": string
+  },
+  "source_pages": {
+    "grantor": integer,
+    "grantee": integer,
+    "legal_description": integer,
+    "date": integer
   }
 }
 
-For source_quotes, return the exact text span from the document that supports each
-extracted field. Copy verbatim — do not paraphrase.
+The document text is segmented with [PAGE N] markers — one per page. For
+source_pages, return the integer N where each quote appears.
+
+For source_quotes:
+- Return the SUBSTANTIVE clause that contains the actual answer, NOT a heading
+  or label. Bad: "Grantor:" or "Date:". Good: the full phrase identifying the
+  party by name or stating the date inline.
+- The quote must, on its own, justify the field value.
+- Prefer verbatim; minor OCR noise is acceptable. NEVER return null when the
+  corresponding field has a value.
+- Aim for 60-200 characters. A two-word fragment is unacceptable unless that
+  fragment IS the answer.
 
 Document:
 """
@@ -558,6 +679,7 @@ def materialize_assignment(db: Session, project_id: int, document_id: int, assig
             "grantee": assignment.grantee,
             "interest_conveyed": assignment.interest_conveyed,
             "source_quotes": assignment.source_quotes or {},
+            "source_pages": assignment.source_pages or {},
         },
     ))
 

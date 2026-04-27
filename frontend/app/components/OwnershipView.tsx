@@ -2,14 +2,18 @@
 
 import { useState, useEffect } from "react";
 import axios from "axios";
-import SourceBadge, { SourceRef } from "./SourceBadge";
+import SourceBadge, { ReviewedBadge, ReviewMeta, SourceRef } from "./SourceBadge";
+import EditableFact from "./EditableFact";
 
 interface Owner {
+  party_id: number | null;
+  interest_id: number;
   name: string;
   fraction: string;
   percentage: number;
   mineral_estate: string;
   source: SourceRef | null;
+  reviewed: Record<string, ReviewMeta>;
 }
 
 interface OwnershipData {
@@ -27,20 +31,19 @@ export default function OwnershipView({ projectId }: { projectId: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchOwnership = async () => {
-      try {
-        setLoading(true);
-        const res = await axios.get(`${API_URL}/projects/${projectId}/ownership`);
-        setData(res.data);
-      } catch (err: any) {
-        setError(err.response?.data?.detail || "Failed to load ownership data");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchOwnership();
-  }, [projectId]);
+  const fetchOwnership = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${API_URL}/projects/${projectId}/ownership`);
+      setData(res.data);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to load ownership data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchOwnership(); }, [projectId]);
 
   if (loading) {
     return (
@@ -101,8 +104,18 @@ export default function OwnershipView({ projectId }: { projectId: number }) {
                     {idx + 1}.
                   </div>
                   <div className="min-w-0">
-                    <div className="font-display text-[1.2rem] font-medium text-ink leading-tight truncate">
-                      {owner.name}
+                    <div className="font-display text-[1.2rem] font-medium text-ink leading-tight">
+                      {owner.party_id ? (
+                        <EditableFact
+                          entityType="party"
+                          entityId={owner.party_id}
+                          field="name"
+                          value={owner.name}
+                          sourceQuote={owner.source?.quote ?? null}
+                          reviewMeta={owner.reviewed?.name ?? null}
+                          onSave={fetchOwnership}
+                        />
+                      ) : owner.name}
                     </div>
                   </div>
                   <div className="text-right">
@@ -126,9 +139,21 @@ export default function OwnershipView({ projectId }: { projectId: number }) {
                       <div className="text-sm text-ink-3 flex items-center gap-2.5">
                         <span className="tabular font-medium text-ink-2">{owner.fraction}</span>
                         <span className="text-line-strong">·</span>
-                        <span className="font-serif-italic">{owner.mineral_estate}</span>
+                        <EditableFact
+                          entityType="interest"
+                          entityId={owner.interest_id}
+                          field="mineral_estate"
+                          value={owner.mineral_estate}
+                          reviewMeta={owner.reviewed?.mineral_estate ?? null}
+                          onSave={fetchOwnership}
+                          className="font-serif-italic"
+                        />
                       </div>
-                      <SourceBadge source={owner.source} />
+                      {Object.keys(owner.reviewed).length > 0 ? (
+                        <ReviewedBadge meta={Object.values(owner.reviewed)[0]} source={owner.source} />
+                      ) : (
+                        <SourceBadge source={owner.source} />
+                      )}
                     </div>
                   </div>
                   <div />

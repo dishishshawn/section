@@ -3,16 +3,39 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import ProjectDetail from "./ProjectDetail";
-import GlobalSearch from "./GlobalSearch";
+import GlobalSearch, { SearchTarget } from "./GlobalSearch";
+import OrgSwitcher from "./OrgSwitcher";
+import MembersPage from "./MembersPage";
+import EmptyState from "./EmptyState";
 
 interface Project {
   id: number;
   name: string;
   jurisdiction: string;
   created_at: string;
+  your_role?: "owner" | "editor" | "viewer" | null;
 }
 
-export default function ProjectShell() {
+interface Org {
+  id: number;
+  name: string;
+  slug: string;
+  billing_status: string | null;
+  your_role: string | null;
+}
+
+interface Me {
+  id: number;
+  email: string;
+  display_name: string | null;
+}
+
+interface ProjectShellProps {
+  me: Me;
+  onSignOut: () => void;
+}
+
+export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -20,19 +43,23 @@ export default function ProjectShell() {
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectJurisdiction, setNewProjectJurisdiction] = useState("Oklahoma");
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [searchTarget, setSearchTarget] = useState<SearchTarget>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [currentOrg, setCurrentOrg] = useState<Org | null>(null);
+  const [showMembers, setShowMembers] = useState(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+  // Re-fetch whenever the active org changes
   useEffect(() => {
     fetchProjects();
-  }, []);
+  }, [currentOrg]);
 
   const fetchProjects = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/projects`);
+      const res = await axios.get(`${API_URL}/projects`, { withCredentials: true });
       setProjects(res.data);
       setError(null);
     } catch (err: any) {
@@ -46,11 +73,15 @@ export default function ProjectShell() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const res = await axios.post(`${API_URL}/projects`, {
-        name: newProjectName,
-        jurisdiction: newProjectJurisdiction,
-        owner_org: "Demo",
-      });
+      const res = await axios.post(
+        `${API_URL}/projects`,
+        {
+          name: newProjectName,
+          jurisdiction: newProjectJurisdiction,
+          org_id: currentOrg?.id ?? null,
+        },
+        { withCredentials: true }
+      );
       setProjects([...projects, res.data]);
       setNewProjectName("");
       setError(null);
@@ -66,7 +97,7 @@ export default function ProjectShell() {
     if (!confirm("Delete this project? This cannot be undone.")) return;
     setDeleting(projectId);
     try {
-      await axios.delete(`${API_URL}/projects/${projectId}`);
+      await axios.delete(`${API_URL}/projects/${projectId}`, { withCredentials: true });
       setProjects(projects.filter((p) => p.id !== projectId));
       setError(null);
     } catch (err: any) {
@@ -77,6 +108,37 @@ export default function ProjectShell() {
     }
   };
 
+  // TODO: wire to POST /api/demo/seed-sample once the backend endpoint ships.
+  // For now this is a UI stub — surfaces a message so the user understands
+  // the feature is coming without creating a broken request.
+  const seedSampleDeed = () => {
+    setError(null);
+    setSuccess(
+      "Sample deed seeding is coming soon — the backend endpoint (POST /api/demo/seed-sample) is not yet wired up."
+    );
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await axios.post(`${API_URL}/auth/signout`, {}, { withCredentials: true });
+    } finally {
+      onSignOut();
+    }
+  };
+
+  // Route: members page
+  if (showMembers && currentOrg) {
+    return (
+      <MembersPage
+        orgId={currentOrg.id}
+        orgName={currentOrg.name}
+        yourRole={currentOrg.your_role || "member"}
+        onClose={() => setShowMembers(false)}
+      />
+    );
+  }
+
+  // Route: project detail
   if (selectedProjectId !== null) {
     const selected = projects.find((p) => p.id === selectedProjectId);
     if (selected) {
@@ -85,7 +147,13 @@ export default function ProjectShell() {
           projectId={selected.id}
           projectName={selected.name}
           jurisdiction={selected.jurisdiction}
-          onBack={() => setSelectedProjectId(null)}
+          orgId={currentOrg?.id ?? null}
+          yourRole={selected.your_role ?? "viewer"}
+          searchTarget={searchTarget}
+          onBack={() => {
+            setSelectedProjectId(null);
+            setSearchTarget(null);
+          }}
         />
       );
     }
@@ -99,16 +167,36 @@ export default function ProjectShell() {
 
   return (
     <div className="min-h-screen bg-paper">
-      {/* Masthead — like the top plate of a recorded-deed book */}
+      {/* Masthead */}
       <header className="bg-paper-deep border-b-[2.5px] border-rule">
         <div className="max-w-6xl mx-auto px-10 pt-10 pb-12">
-          {/* Dateline / issue line */}
-          <div className="flex items-baseline justify-between mb-6 pb-3 rule-hairline">
-            <div className="eyebrow">
-              Section &middot; Land graph
-            </div>
-            <div className="text-sm font-serif-italic text-ink-3 tabular">
-              {today}
+          {/* Dateline / toolbar */}
+          <div className="flex items-center justify-between mb-6 pb-3 rule-hairline gap-4">
+            <div className="eyebrow">Section &middot; Land graph</div>
+            <div className="flex items-center gap-3">
+              {/* Org switcher */}
+              <OrgSwitcher
+                currentOrgId={currentOrg?.id ?? null}
+                onOrgChange={(org) => setCurrentOrg(org)}
+              />
+              {/* Members link (only when in an org) */}
+              {currentOrg && (currentOrg.your_role === "owner" || currentOrg.your_role === "admin") && (
+                <button
+                  onClick={() => setShowMembers(true)}
+                  className="text-sm font-serif-italic text-ink-3 hover:text-ink transition-colors"
+                >
+                  Members
+                </button>
+              )}
+              <span className="text-line-strong text-sm">·</span>
+              <span className="text-sm font-serif-italic text-ink-3 tabular">{today}</span>
+              <span className="text-line-strong text-sm">·</span>
+              <button
+                onClick={handleSignOut}
+                className="text-sm font-serif-italic text-ink-3 hover:text-ink transition-colors"
+              >
+                Sign out
+              </button>
             </div>
           </div>
 
@@ -133,20 +221,23 @@ export default function ProjectShell() {
           </p>
 
           <div className="mt-8">
-            <GlobalSearch onOpenProject={(id) => setSelectedProjectId(id)} />
+            <GlobalSearch
+              onOpenProject={(id, target) => {
+                setSearchTarget(target ?? null);
+                setSelectedProjectId(id);
+              }}
+            />
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-10 py-12">
-        {/* New project form — styled like a docket intake line */}
+        {/* New project form */}
         <section className="mb-12">
           <div className="flex items-baseline justify-between mb-3">
-            <h2 className="font-display text-2xl font-medium text-ink">
-              Open a new file
-            </h2>
+            <h2 className="font-display text-2xl font-medium text-ink">Open a new file</h2>
             <span className="text-xs font-serif-italic text-ink-3">
-              Name and jurisdiction
+              {currentOrg ? `In ${currentOrg.name}` : "Personal workspace"}
             </span>
           </div>
 
@@ -198,19 +289,25 @@ export default function ProjectShell() {
             <span className="text-ink-2 text-sm">{error}</span>
           </div>
         )}
+
         {success && (
-          <div className="mb-6 flex items-start gap-3 border-l-2 border-positive bg-positive-soft/40 px-4 py-3">
-            <span className="font-serif-italic text-positive mt-0.5">Filed —</span>
-            <span className="text-ink-2 text-sm">{success}</span>
+          <div className="mb-6 flex items-start gap-3 border-l-2 border-moss bg-moss-soft/40 px-4 py-3">
+            <span className="font-serif-italic text-moss mt-0.5">Note —</span>
+            <span className="text-ink-2 text-sm flex-1">{success}</span>
+            <button
+              onClick={() => setSuccess(null)}
+              className="text-ink-3 hover:text-ink text-sm"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
           </div>
         )}
 
         {/* Project register */}
         <section>
           <div className="flex items-baseline justify-between mb-4 pb-3 rule-hairline">
-            <h2 className="font-display text-2xl font-medium text-ink">
-              Project register
-            </h2>
+            <h2 className="font-display text-2xl font-medium text-ink">Project register</h2>
             <span className="text-sm font-serif-italic text-ink-3 tabular">
               {projects.length} on file
             </span>
@@ -222,14 +319,25 @@ export default function ProjectShell() {
               <span className="font-serif-italic">Loading projects…</span>
             </div>
           ) : projects.length === 0 ? (
-            <div className="border border-dashed border-line-strong bg-surface-2 px-6 py-16 text-center">
-              <div className="font-display text-xl text-ink mb-1">
-                No files on the docket
-              </div>
-              <p className="text-sm text-ink-3 font-serif-italic">
-                Open your first file above to start ingesting documents.
-              </p>
-            </div>
+            <EmptyState
+              title="No projects yet"
+              description="Open your first file above to start ingesting documents, or seed a sample deed to explore a worked example."
+              primaryAction={{
+                label: "Create your first project",
+                onClick: () => {
+                  // focus the project-name input at the top of the form
+                  const el = document.querySelector<HTMLInputElement>(
+                    'input[placeholder^="e.g."]'
+                  );
+                  el?.focus();
+                  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                },
+              }}
+              secondaryAction={{
+                label: "Try with sample deed",
+                onClick: seedSampleDeed,
+              }}
+            />
           ) : (
             <ul className="divide-y divide-line">
               {projects.map((project, idx) => (
@@ -241,7 +349,6 @@ export default function ProjectShell() {
                     onClick={() => setSelectedProjectId(project.id)}
                     className="w-full text-left px-4 py-5 flex items-center gap-6"
                   >
-                    {/* Folio number — lining figures, hand-stamped feel */}
                     <div className="flex-shrink-0 w-14 text-right">
                       <div className="font-numeric text-[1.35rem] text-ink-3 leading-none">
                         {String(idx + 1).padStart(2, "0")}
@@ -253,12 +360,11 @@ export default function ProjectShell() {
                         {project.name}
                       </div>
                       <div className="mt-1.5 flex items-center gap-3 text-sm">
-                        <span className="font-serif-italic text-ink-2">
-                          {project.jurisdiction}
-                        </span>
+                        <span className="font-serif-italic text-ink-2">{project.jurisdiction}</span>
                         <span className="text-line-strong">·</span>
                         <span className="tabular text-ink-3">
-                          Filed {new Date(project.created_at).toLocaleDateString(undefined, {
+                          Filed{" "}
+                          {new Date(project.created_at).toLocaleDateString(undefined, {
                             year: "numeric",
                             month: "short",
                             day: "numeric",
@@ -266,7 +372,10 @@ export default function ProjectShell() {
                         </span>
                       </div>
                     </div>
-                    <span className="text-ink-3 group-hover:text-accent group-hover:translate-x-0.5 transition-all text-xl" aria-hidden>
+                    <span
+                      className="text-ink-3 group-hover:text-accent group-hover:translate-x-0.5 transition-all text-xl"
+                      aria-hidden
+                    >
                       →
                     </span>
                   </button>
@@ -293,7 +402,9 @@ export default function ProjectShell() {
           <span className="font-serif-italic">
             Section &middot; the operating record for land work
           </span>
-          <span className="tabular text-xs">v0.1</span>
+          <span className="tabular text-xs">
+            {me.display_name || me.email}
+          </span>
         </div>
       </footer>
     </div>
