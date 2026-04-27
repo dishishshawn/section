@@ -34,29 +34,6 @@ def _now() -> float:
     return time.time()
 
 
-def _ensure_table(db: Session) -> None:
-    """
-    Create the ``rate_limit_buckets`` table if it does not exist.
-
-    The production path relies on Alembic (see the migration file), but the
-    in-memory test engine uses ``models.Base.metadata.create_all`` which does
-    not know about Alembic-only tables. Rather than couple the test fixture
-    to this concern, we create-if-missing on first use. It's a one-time no-op
-    per process after the table exists.
-    """
-    db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS rate_limit_buckets (
-                key TEXT PRIMARY KEY,
-                count INTEGER NOT NULL DEFAULT 0,
-                window_start REAL NOT NULL
-            )
-            """
-        )
-    )
-
-
 def check_rate_limit(
     db: Session,
     key: str,
@@ -79,7 +56,6 @@ def check_rate_limit(
     allow a single extra request through, which is acceptable for anti-abuse
     limits on auth + invite endpoints.
     """
-    _ensure_table(db)
     now = _now()
 
     row = db.execute(
@@ -98,7 +74,7 @@ def check_rate_limit(
         db.commit()
         return True, 0
 
-    count, window_start = row[0], float(row[1])
+    count, window_start = row[0], row[1]
     elapsed = now - window_start
 
     if elapsed >= window_seconds:

@@ -17,31 +17,16 @@ from facts import resolved_data, get_provenance
 from str_parser import parse_legal_description, parsed_to_dict, section_grid_position
 from auth import get_current_user
 from permissions import (
-    effective_project_role as _effective_project_role,
-    user_accessible_project_ids as _user_accessible_project_ids_set,
-    require_project_role as _require_project_role_helper,
-    PROJECT_ROLE_RANK as _PROJECT_ROLE_RANK,
-    ORG_ROLE_RANK as _ORG_ROLE_RANK,
+    ORG_ROLE_RANK,
+    effective_project_role,
+    require_project_role,
+    user_accessible_project_ids,
 )
 
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 router = APIRouter(prefix="/api", tags=["api"])
-
-# ---------------------------------------------------------------------------
-# Row-level authorization helpers — consolidated in `permissions.py`.
-# These thin wrappers preserve call-site signatures used throughout this file.
-# ---------------------------------------------------------------------------
-
-
-def _require_project_role(db: Session, user: User, project_id: int, min_role: str = "viewer"):
-    return _require_project_role_helper(db, user, project_id, min_role)
-
-
-def _user_accessible_project_ids(db: Session, user: User) -> list[int]:
-    """Return all project IDs the user can see (list form for legacy callers)."""
-    return list(_user_accessible_project_ids_set(db, user))
 
 class ProjectCreate(BaseModel):
     name: str
@@ -69,7 +54,7 @@ def create_project(
             OrgMembership.user_id == user.id,
             OrgMembership.org_id == project.org_id,
         ).first()
-        if not m or _ORG_ROLE_RANK.get(m.role, 0) < _ORG_ROLE_RANK.get("member", 0):
+        if not m or ORG_ROLE_RANK.get(m.role, 0) < ORG_ROLE_RANK.get("member", 0):
             raise HTTPException(status_code=403, detail="Not a member of that organization")
 
     db_project = Project(
@@ -101,7 +86,7 @@ def get_project(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    role = _require_project_role(db, user, project_id, "viewer")
+    role = require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     return {"id": project.id, "name": project.name, "jurisdiction": project.jurisdiction, "created_at": project.created_at.isoformat(), "your_role": role}
 
@@ -111,7 +96,7 @@ def list_projects(
     user: User = Depends(get_current_user),
 ):
     try:
-        accessible_ids = _user_accessible_project_ids(db, user)
+        accessible_ids = user_accessible_project_ids(db, user)
         if not accessible_ids:
             return []
         projects = db.query(Project).filter(Project.id.in_(accessible_ids)).all()
@@ -121,7 +106,7 @@ def list_projects(
                 "name": p.name,
                 "jurisdiction": p.jurisdiction,
                 "created_at": p.created_at.isoformat(),
-                "your_role": _effective_project_role(db, user, p.id),
+                "your_role": effective_project_role(db, user, p.id),
             }
             for p in projects
         ]
@@ -151,7 +136,7 @@ async def upload_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "editor")
+    require_project_role(db, user, project_id, "editor")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -213,7 +198,7 @@ def get_document_file(
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    _require_project_role(db, user, doc.project_id, "viewer")
+    require_project_role(db, user, doc.project_id, "viewer")
     file_path = UPLOAD_DIR / doc.s3_key
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File missing on disk")
@@ -233,7 +218,7 @@ def list_documents(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     docs = db.query(Document).filter(Document.project_id == project_id).order_by(Document.created_at.desc()).all()
     return [
         {
@@ -255,7 +240,7 @@ def extract_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "editor")
+    require_project_role(db, user, project_id, "editor")
     doc = db.query(Document).filter(
         Document.id == document_id,
         Document.project_id == project_id
@@ -274,7 +259,7 @@ def get_ownership(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -357,7 +342,7 @@ def get_obligations(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     obligations = db.query(Obligation).filter(Obligation.project_id == project_id).all()
     now = datetime.utcnow()
 
@@ -425,7 +410,7 @@ def get_runsheet(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -500,7 +485,7 @@ def get_risk(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -579,7 +564,7 @@ def export_ownership_report(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -637,7 +622,7 @@ def export_runsheet(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -655,7 +640,7 @@ def export_title_opinion(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -675,7 +660,7 @@ def export_stipulations(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -699,7 +684,7 @@ def get_tract_map(
     Each tract gets its legal description parsed, yielding section grid position,
     aliquot coverage, and the instruments recorded against that section.
     """
-    _require_project_role(db, user, project_id, "viewer")
+    require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -827,7 +812,7 @@ def delete_project(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_project_role(db, user, project_id, "owner")
+    require_project_role(db, user, project_id, "owner")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -847,7 +832,7 @@ def global_search(
         return {"query": term, "results": {"projects": [], "documents": [], "parties": [], "tracts": []}}
 
     like = f"%{term}%"
-    accessible_ids = _user_accessible_project_ids(db, user)
+    accessible_ids = user_accessible_project_ids(db, user)
 
     projects = (
         db.query(Project)

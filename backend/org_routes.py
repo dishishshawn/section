@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user, send_magic_link
 from database import get_db
 from rate_limit import client_ip, enforce_rate_limit
+from permissions import require_org_role, require_project_role
 from models import (
     OrgInvite,
     OrgMembership,
@@ -47,51 +48,6 @@ def _org_membership(db: Session, user: User, org_id: int) -> OrgMembership | Non
         .filter(OrgMembership.user_id == user.id, OrgMembership.org_id == org_id)
         .first()
     )
-
-
-def _require_org_role(db: Session, user: User, org_id: int, min_role: str = "member"):
-    from permissions import require_org_role
-    require_org_role(db, user, org_id, min_role)
-    return _org_membership(db, user, org_id)
-
-
-def _project_role(db: Session, user: User, project_id: int) -> str | None:
-    """
-    Effective project role.
-    1. Explicit ProjectAccess row wins.
-    2. Else derive from org membership via project.org_id.
-    3. Org owners/admins default to 'editor'.
-    4. Org members default to 'viewer'.
-    Returns None if user has no access.
-    """
-    pa = (
-        db.query(ProjectAccess)
-        .filter(
-            ProjectAccess.user_id == user.id,
-            ProjectAccess.project_id == project_id,
-        )
-        .first()
-    )
-    if pa:
-        return pa.role
-
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project or not project.org_id:
-        return None
-
-    m = _org_membership(db, user, project.org_id)
-    if not m:
-        return None
-    if m.role in ("owner", "admin"):
-        return "editor"
-    return "viewer"
-
-
-def _require_project_role(
-    db: Session, user: User, project_id: int, min_role: str = "viewer"
-):
-    from permissions import require_project_role
-    return require_project_role(db, user, project_id, min_role)
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +163,7 @@ def get_org(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    m = _require_org_role(db, user, org_id, "member")
+    m = require_org_role(db, user, org_id, "member")
     org = m.org
     return OrgResponse(
         id=org.id,
@@ -229,7 +185,7 @@ def list_members(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_org_role(db, user, org_id, "member")
+    require_org_role(db, user, org_id, "member")
     memberships = (
         db.query(OrgMembership).filter(OrgMembership.org_id == org_id).all()
     )
@@ -253,7 +209,7 @@ def update_member_role(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_org_role(db, user, org_id, "owner")
+    require_org_role(db, user, org_id, "owner")
     if body.role not in ORG_ROLE_RANK:
         raise HTTPException(status_code=422, detail="Invalid role")
     m = (
@@ -285,7 +241,7 @@ def remove_member(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    caller_m = _require_org_role(db, user, org_id, "admin")
+    caller_m = require_org_role(db, user, org_id, "admin")
     # Only owner can remove other owners
     target_m = (
         db.query(OrgMembership)
@@ -352,7 +308,7 @@ def create_invite(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_org_role(db, user, org_id, "admin")
+    require_org_role(db, user, org_id, "admin")
     if body.role not in ORG_ROLE_RANK:
         raise HTTPException(status_code=422, detail="Invalid org role")
 
@@ -496,8 +452,8 @@ def list_project_access(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_org_role(db, user, org_id, "member")
-    _require_project_role(db, user, project_id, "viewer")
+    require_org_role(db, user, org_id, "member")
+    require_project_role(db, user, project_id, "viewer")
     accesses = (
         db.query(ProjectAccess)
         .filter(
@@ -525,8 +481,8 @@ def grant_project_access(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_org_role(db, user, org_id, "admin")
-    _require_project_role(db, user, project_id, "owner")
+    require_org_role(db, user, org_id, "admin")
+    require_project_role(db, user, project_id, "owner")
     if body.role not in PROJECT_ROLE_RANK:
         raise HTTPException(status_code=422, detail="Invalid project role")
     pa = (
@@ -561,8 +517,8 @@ def update_project_access(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_org_role(db, user, org_id, "admin")
-    _require_project_role(db, user, project_id, "owner")
+    require_org_role(db, user, org_id, "admin")
+    require_project_role(db, user, project_id, "owner")
     if body.role not in PROJECT_ROLE_RANK:
         raise HTTPException(status_code=422, detail="Invalid project role")
     pa = (
@@ -588,8 +544,8 @@ def revoke_project_access(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_org_role(db, user, org_id, "admin")
-    _require_project_role(db, user, project_id, "owner")
+    require_org_role(db, user, org_id, "admin")
+    require_project_role(db, user, project_id, "owner")
     pa = (
         db.query(ProjectAccess)
         .filter(

@@ -13,7 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from logging_config import bind_request, request_id_var, route_var, user_id_var
+from logging_config import bind_request, request_id_var, route_var
 
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -28,7 +28,6 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
         rid_token = request_id_var.set(rid)
         route_token = route_var.set(route_path)
-        user_token = user_id_var.set(None)
         bind_request(rid, route_path)
 
         # Expose on request.state for handlers / sentry scope.
@@ -39,7 +38,6 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         finally:
             request_id_var.reset(rid_token)
             route_var.reset(route_token)
-            user_id_var.reset(user_token)
 
         response.headers[REQUEST_ID_HEADER] = rid
         return response
@@ -51,5 +49,5 @@ def _looks_like_uuid(value: str | None) -> bool:
     try:
         uuid.UUID(value)
         return True
-    except (ValueError, AttributeError, TypeError):
+    except ValueError:
         return False

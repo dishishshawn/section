@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
 from models import Organization, OrgMembership, StripeWebhookEvent, User
-from permissions import require_org_role as _require_org_role
+from permissions import require_org_role
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -45,7 +45,7 @@ def create_checkout_session(
             detail="Stripe is not configured on this server",
         )
 
-    _require_org_role(db, user, body.org_id, "owner")
+    require_org_role(db, user, body.org_id, "owner")
     org = db.query(Organization).filter(Organization.id == body.org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Org not found")
@@ -213,7 +213,7 @@ def get_billing_status(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _require_org_role(db, user, org_id, "member")
+    require_org_role(db, user, org_id, "member")
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Org not found")
@@ -238,7 +238,7 @@ def reconcile_seats(
 
     Useful after manual DB edits, failed webhook deliveries, or billing drift.
     """
-    _require_org_role(db, user, org_id, "admin")
+    require_org_role(db, user, org_id, "admin")
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Org not found")

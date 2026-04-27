@@ -45,9 +45,7 @@ _RESERVED_RECORD_ATTRS = {
 
 
 class JsonFormatter(logging.Formatter):
-    """Minimal JSON formatter — no external deps."""
-
-    def format(self, record: logging.LogRecord) -> str:  # noqa: D401
+    def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
             "time": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
@@ -59,17 +57,10 @@ class JsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
-        # Pull any structured extras attached via logger.info(..., extra={...}).
         for key, value in record.__dict__.items():
-            if key in _RESERVED_RECORD_ATTRS or key in payload:
+            if key in _RESERVED_RECORD_ATTRS or key in payload or key.startswith("_"):
                 continue
-            if key.startswith("_"):
-                continue
-            try:
-                json.dumps(value)
-                payload[key] = value
-            except (TypeError, ValueError):
-                payload[key] = repr(value)
+            payload[key] = value
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 

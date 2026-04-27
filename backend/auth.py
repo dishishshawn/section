@@ -97,7 +97,14 @@ def send_magic_link(email: str, token: str) -> None:
     from_name = "Section"
     reply_to = os.getenv("REPLY_TO_EMAIL", f"no-reply@{from_address.split('@')[-1]}")
 
-    html_body = magic_link_html(link, expiry_minutes=LINK_TTL_SECONDS // 60)
+    expiry_min = LINK_TTL_SECONDS // 60
+    html_body = magic_link_html(link, expiry_minutes=expiry_min)
+    text_body = (
+        f"Sign in to Section\n\n"
+        f"Click the link below to sign in. This link expires in {expiry_min} minutes.\n\n"
+        f"{link}\n\n"
+        f"If you didn't request this, you can safely ignore this email.\n"
+    )
 
     api_key = os.getenv("RESEND_API_KEY")
     if not api_key:
@@ -112,6 +119,7 @@ def send_magic_link(email: str, token: str) -> None:
         "to": email,
         "subject": "Sign in to Section",
         "html": html_body,
+        "text": text_body,
         "headers": {
             "List-Unsubscribe": f"<mailto:{reply_to}?subject=unsubscribe>",
             "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

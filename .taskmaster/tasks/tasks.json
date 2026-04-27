@@ -179,8 +179,8 @@
         "id": 5,
         "title": "Test harness + first-pass coverage for critical paths",
         "description": "Zero tests exist today. Task 4 shipped with four blockers caught post-hoc. Every future feature has the same exposure. Add pytest + frontend test runner + coverage on critical flows.",
-        "details": "Backend: add pytest, pytest-asyncio, httpx, pytest-cov to requirements.txt. conftest.py with in-memory SQLite engine + seeded user/org/project fixtures. Cover: auth magic-link request + consume, override PATCH precedence (latest-wins, null reverts), cross-org project isolation, invite accept (email-match case-insensitive, expired → 410, already-used → 409), Stripe webhook signature rejection + idempotency, export endpoint smoke. Frontend: add Vitest + React Testing Library; one Playwright smoke (sign-in → create project → upload → see runsheet). Target 60% backend line coverage, key-flow frontend only.",
-        "testStrategy": "1. Run pytest locally — all green. 2. coverage report shows >=60% on backend/routes.py, backend/override_routes.py, backend/org_routes.py, backend/billing_routes.py. 3. Vitest suite green. 4. Playwright smoke green against dev server.",
+        "details": "Backend: add pytest, pytest-asyncio, httpx, pytest-cov to requirements.txt. conftest.py with in-memory SQLite engine + seeded user/org/project fixtures. Cover: auth magic-link request + consume, override PATCH precedence (latest-wins, null reverts), cross-org project isolation, invite accept (email-match case-insensitive, expired \u00e2\u2020\u2019 410, already-used \u00e2\u2020\u2019 409), Stripe webhook signature rejection + idempotency, export endpoint smoke. Frontend: add Vitest + React Testing Library; one Playwright smoke (sign-in \u00e2\u2020\u2019 create project \u00e2\u2020\u2019 upload \u00e2\u2020\u2019 see runsheet). Target 60% backend line coverage, key-flow frontend only.",
+        "testStrategy": "1. Run pytest locally \u00e2\u20ac\u201d all green. 2. coverage report shows >=60% on backend/routes.py, backend/override_routes.py, backend/org_routes.py, backend/billing_routes.py. 3. Vitest suite green. 4. Playwright smoke green against dev server.",
         "priority": "high",
         "dependencies": [],
         "status": "done",
@@ -191,18 +191,20 @@
         "title": "CI pipeline (GitHub Actions) + pre-merge gates",
         "description": "Tests without CI rot in two weeks. Task-4 blockers would have been caught. Add GitHub Actions running pytest + frontend checks on every PR.",
         "details": ".github/workflows/ci.yml: Python 3.11 matrix, pip install requirements, run pytest with coverage. Node 20, npm ci, next build, vitest, tsc --noEmit, ruff + black --check. Trigger on pull_request and push to main. Status badge in README. Require green CI before merge (branch protection rule).",
-        "testStrategy": "1. Open a test PR with a deliberate failing test — CI must fail red. 2. Fix the test — CI goes green. 3. Confirm branch protection blocks merge on red. 4. README badge renders correctly.",
+        "testStrategy": "1. Open a test PR with a deliberate failing test \u00e2\u20ac\u201d CI must fail red. 2. Fix the test \u00e2\u20ac\u201d CI goes green. 3. Confirm branch protection blocks merge on red. 4. README badge renders correctly.",
         "priority": "high",
-        "dependencies": [5],
+        "dependencies": [
+          5
+        ],
         "status": "done",
         "subtasks": []
       },
       {
         "id": 7,
         "title": "Formalize schema migrations with Alembic",
-        "description": "Ten inline CREATE TABLE blocks in main.py — no rollback, no diff review. First Postgres deploy will ship a broken migration nobody can undo.",
+        "description": "Ten inline CREATE TABLE blocks in main.py \u00e2\u20ac\u201d no rollback, no diff review. First Postgres deploy will ship a broken migration nobody can undo.",
         "details": "Install Alembic. alembic init migrations/. Snapshot current schema as 0001_initial. Rewrite main.py startup to run alembic upgrade head instead of inline DDL. Document alembic revision --autogenerate workflow in README. Verify migration round-trip on fresh SQLite and Postgres.",
-        "testStrategy": "1. Delete dev DB, run app, verify schema created via Alembic matches prior inline schema. 2. Generate a no-op revision with autogenerate — confirm empty. 3. Add a column via model change + autogenerate — confirm migration file is correct. 4. Downgrade works without data loss on test data.",
+        "testStrategy": "1. Delete dev DB, run app, verify schema created via Alembic matches prior inline schema. 2. Generate a no-op revision with autogenerate \u00e2\u20ac\u201d confirm empty. 3. Add a column via model change + autogenerate \u00e2\u20ac\u201d confirm migration file is correct. 4. Downgrade works without data loss on test data.",
         "priority": "high",
         "dependencies": [],
         "status": "done",
@@ -213,7 +215,7 @@
         "title": "Rate limit auth + invite endpoints",
         "description": "/api/auth/request-link enables email enumeration + mailbox flooding (Resend bills you, sender reputation burns). Invite endpoint enables spam from your domain.",
         "details": "Add slowapi (or per-IP+email SQLite token bucket for v1). Limits: 5/hour per email on magic-link request, 20/day per org on invite creation, 10/minute per IP global on auth endpoints. Surface 429 cleanly in SignIn + invite UI with retry-after messaging.",
-        "testStrategy": "1. Hit /api/auth/request-link 6x rapidly for same email — 6th returns 429. 2. Create 21 invites in a day as the same org — 21st returns 429. 3. UI shows human-readable retry message, not raw JSON error.",
+        "testStrategy": "1. Hit /api/auth/request-link 6x rapidly for same email \u00e2\u20ac\u201d 6th returns 429. 2. Create 21 invites in a day as the same org \u00e2\u20ac\u201d 21st returns 429. 3. UI shows human-readable retry message, not raw JSON error.",
         "priority": "high",
         "dependencies": [],
         "status": "done",
@@ -224,18 +226,20 @@
         "title": "Stripe webhook hardening (idempotency + customer-id fallback + seat sync)",
         "description": "Duplicate webhook delivery flips billing_status twice. customer.subscription.deleted without org_id in metadata is silently dropped. Seat quantity never updates when members join/leave. Customer removes 3 seats, still billed, chargebacks and churns.",
         "details": "Add stripe_webhook_events table keyed on event.id to dedupe (skip if already processed). Fallback: when metadata.org_id is missing, look up org by stripe_customer_id. On invite-accept and member-remove, call stripe.SubscriptionItem.modify(quantity=current_member_count) inside the same DB transaction. Add admin-only 'Reconcile seats' button that re-reads membership count and pushes to Stripe.",
-        "testStrategy": "1. POST same webhook twice — second is no-op, first processes. 2. POST customer.subscription.deleted with no metadata but valid customer — org is found and updated. 3. Accept invite → Stripe quantity increments by 1. 4. Remove member → quantity decrements by 1. 5. Reconcile button on an out-of-sync org fixes it.",
+        "testStrategy": "1. POST same webhook twice \u00e2\u20ac\u201d second is no-op, first processes. 2. POST customer.subscription.deleted with no metadata but valid customer \u00e2\u20ac\u201d org is found and updated. 3. Accept invite \u00e2\u2020\u2019 Stripe quantity increments by 1. 4. Remove member \u00e2\u2020\u2019 quantity decrements by 1. 5. Reconcile button on an out-of-sync org fixes it.",
         "priority": "high",
-        "dependencies": [5],
+        "dependencies": [
+          5
+        ],
         "status": "done",
         "subtasks": []
       },
       {
         "id": 10,
         "title": "Error monitoring + structured logging",
-        "description": "Today a 500 in prod is invisible — print() to stdout, no request ID, no user context. First bug report from a paying landman takes a day to reproduce.",
+        "description": "Today a 500 in prod is invisible \u00e2\u20ac\u201d print() to stdout, no request ID, no user context. First bug report from a paying landman takes a day to reproduce.",
         "details": "Sentry SDK on backend (FastAPI integration + release tag from git SHA) and frontend (Next.js integration, source maps uploaded on build). Replace all print() with stdlib logging + JSON formatter (or structlog). X-Request-ID middleware generating UUID, threading into Sentry tags + log context + response header. Sentry user context populated from get_current_user.",
-        "testStrategy": "1. Trigger a deliberate 500 in dev — appears in Sentry with request ID, user email, route, SQL query context. 2. Frontend JS error appears with source-mapped stack trace. 3. Every log line in JSON with request_id, user_id, route.",
+        "testStrategy": "1. Trigger a deliberate 500 in dev \u00e2\u20ac\u201d appears in Sentry with request ID, user email, route, SQL query context. 2. Frontend JS error appears with source-mapped stack trace. 3. Every log line in JSON with request_id, user_id, route.",
         "priority": "high",
         "dependencies": [],
         "status": "done",
@@ -246,9 +250,11 @@
         "title": "Consolidate project-role permission helpers",
         "description": "_effective_project_role is duplicated in routes.py and override_routes.py. Task-4 review already caught one drift. Two copies drifting is how permission bugs reach production.",
         "details": "Create backend/permissions.py. Move _effective_project_role, _user_accessible_project_ids, _require_editor, _require_project_role, _require_org_role into it. Update routes.py and override_routes.py to import. Add unit tests covering owner/admin/editor/viewer/none and the created_by fallback for legacy no-org projects.",
-        "testStrategy": "1. grep for _effective_project_role — only one definition. 2. pytest permissions_test.py — owner, admin (→editor), editor, viewer, none, created_by-fallback all return expected role. 3. Override PATCH + project GET still enforce correctly end-to-end.",
+        "testStrategy": "1. grep for _effective_project_role \u00e2\u20ac\u201d only one definition. 2. pytest permissions_test.py \u00e2\u20ac\u201d owner, admin (\u00e2\u2020\u2019editor), editor, viewer, none, created_by-fallback all return expected role. 3. Override PATCH + project GET still enforce correctly end-to-end.",
         "priority": "medium",
-        "dependencies": [5],
+        "dependencies": [
+          5
+        ],
         "status": "done",
         "subtasks": []
       },
@@ -256,7 +262,7 @@
         "id": 12,
         "title": "Onboarding + empty states + sample-deed guided tour",
         "description": "Landman signs up, sees zero projects, blank screen, bounces. Today the UI assumes you already have data. First-session activation is the #1 conversion lever.",
-        "details": "Empty-state components for: no projects (org dashboard), no documents (in project), no instruments extracted, no obligations, no audit entries, no tract map data. Each with illustration, one-sentence explainer, and primary CTA. 'Try with sample deed' seeded tract on first sign-in that walks upload → extract → edit a fact → export title opinion as a 4-step guided tour with dismissable tooltips.",
+        "details": "Empty-state components for: no projects (org dashboard), no documents (in project), no instruments extracted, no obligations, no audit entries, no tract map data. Each with illustration, one-sentence explainer, and primary CTA. 'Try with sample deed' seeded tract on first sign-in that walks upload \u00e2\u2020\u2019 extract \u00e2\u2020\u2019 edit a fact \u00e2\u2020\u2019 export title opinion as a 4-step guided tour with dismissable tooltips.",
         "testStrategy": "1. Fresh sign-up lands on dashboard with guided tour auto-started. 2. Each of 6 empty-state screens renders correctly when no data. 3. Sample deed flow completes end-to-end and produces an exported PDF. 4. Tour is dismissable and stays dismissed across sessions (stored per-user).",
         "priority": "high",
         "dependencies": [],
@@ -267,10 +273,103 @@
         "id": 13,
         "title": "Email deliverability (custom domain + SPF/DKIM/DMARC)",
         "description": "EMAIL_FROM defaults to noreply@yourdomain.com. Magic links from Resend without domain auth land in spam. A landman who never gets the sign-in email never becomes a user.",
-        "details": "Verify custom sending domain in Resend. Publish SPF include, DKIM CNAME, DMARC p=quarantine in DNS. Template polish: text + HTML for magic-link and invite emails with firm branding. Resend bounce + complaint webhook → flag affected users in users table so we don't re-send to dead addresses.",
+        "details": "Verify custom sending domain in Resend. Publish SPF include, DKIM CNAME, DMARC p=quarantine in DNS. Template polish: text + HTML for magic-link and invite emails with firm branding. Resend bounce + complaint webhook \u00e2\u2020\u2019 flag affected users in users table so we don't re-send to dead addresses.",
         "testStrategy": "1. mail-tester.com on outbound magic-link scores >=9/10. 2. DMARC aggregate report shows 100% pass. 3. Bouncing a test send flips user.email_deliverable=false, skipping future sends. 4. HTML email renders correctly in Gmail, Outlook, Apple Mail.",
         "priority": "high",
         "dependencies": [],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 14,
+        "title": "Eliminate org_routes/billing_routes role-helper wrapper duplication",
+        "description": "Task 11's consolidation left local _require_org_role / _require_project_role wrappers in org_routes.py that delegate to permissions.py but re-query the OrgMembership row. Two queries per call where permissions.py already does one. The 'consolidation' became drift-by-shim.",
+        "details": "Delete _require_org_role and _require_project_role from org_routes.py. Update permissions.require_org_role to return the OrgMembership instance (not just role string) so the two callers (get_org line 223, remove_member line 301) that consume the return value still work. Update billing_routes.py import: `from permissions import require_org_role`. Verify no other module still imports _require_org_role from org_routes. Also delete the now-dead _project_role function (lines 58-87) \u00e2\u20ac\u201d verify with grep before removing.",
+        "testStrategy": "1. grep -rn '_require_org_role\\b' backend/ \u00e2\u20ac\u201d expect zero matches outside permissions.py. 2. All 89 tests still green. 3. Single OrgMembership query per role check (instrument or read code).",
+        "priority": "high",
+        "dependencies": [
+          11
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 15,
+        "title": "rate_limit.py: replace inline CREATE TABLE with SQLAlchemy model",
+        "description": "Task 8 shipped _ensure_table() with raw CREATE TABLE IF NOT EXISTS \u00e2\u20ac\u201d exactly the inline-DDL anti-pattern Task 7 (Alembic) was supposed to kill. Self-inflicted regression of the migration story.",
+        "details": "Define RateLimitBucket in models.py (key PK, count int, window_start float). The Alembic migration 0003 already creates the table \u00e2\u20ac\u201d delete _ensure_table() and the runtime DDL call. Tests rely on Base.metadata.create_all picking up the new model. Also drop the defensive float() cast on row[1] (line 101) \u00e2\u20ac\u201d SQLite REAL already returns float.",
+        "testStrategy": "1. grep 'CREATE TABLE' backend/rate_limit.py \u00e2\u20ac\u201d zero matches. 2. test_rate_limit.py still green against in-memory SQLite. 3. Fresh-DB `alembic upgrade head` still creates rate_limit_buckets via 0003.",
+        "priority": "high",
+        "dependencies": [
+          7,
+          8
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 16,
+        "title": "Sentry: wire it or rip it",
+        "description": "frontend/app/sentry.config.ts has fire-and-forget init at module scope but is imported by zero files. next.config.ts swallows require errors silently \u00e2\u20ac\u201d prod builds without Sentry will fail without warning. Backend Sentry is conditionally initialized but never tested with a real DSN. The whole Task 10 frontend half is theatre.",
+        "details": "Decision needed: (a) commit \u00e2\u20ac\u201d import sentry.config.ts from layout.tsx, pin a Next 16-compatible @sentry/nextjs version (or downgrade Next), add console.warn when DSN is set but require fails; or (b) remove \u00e2\u20ac\u201d delete sentry.config.ts, strip withSentryConfig from next.config.ts, keep only the backend sentry_sdk init. Either way: update README Observability section, remove dead code paths.",
+        "testStrategy": "Option (a): set NEXT_PUBLIC_SENTRY_DSN in CI, build, confirm Sentry SDK present in bundle. Option (b): grep '@sentry' frontend/ returns zero matches.",
+        "priority": "medium",
+        "dependencies": [
+          10
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 17,
+        "title": "Rescue test_coverage_fill.py \u00e2\u20ac\u201d coverage padding masquerading as tests",
+        "description": "File docstring admits the file exists 'to lift coverage above the 60% floor required by task 5.' Half its tests are status-code-only (assert r.status_code == 200) with no behavior check. Coverage gate is misleading.",
+        "details": "Audit each test in test_coverage_fill.py. Fold the meaningful ones (audit log, role-gated delete, share lifecycle, duplicate org slug, role escalation) into the right files (test_projects.py, test_orgs.py, test_sharing.py \u00e2\u20ac\u201d create if missing). Delete the status-code-only tests and replace with behavior assertions, or delete outright. The file should not exist by name afterward.",
+        "testStrategy": "1. backend/tests/test_coverage_fill.py removed. 2. Coverage on routes.py, override_routes.py, org_routes.py, billing_routes.py still >= 60%. If it dips, write actual behavior tests for the gap rather than padding.",
+        "priority": "medium",
+        "dependencies": [
+          5
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 18,
+        "title": "Backend cleanup pass: alias shims, polymorphic params, defensive code",
+        "description": "Roll-up of small slop items found during code review. Each is a 5-30 line fix; bundled to avoid 6 micro-PRs.",
+        "details": "Items: (1) routes.py:19-44 \u00e2\u20ac\u201d collapse the import-as-alias + thin wrapper for _require_project_role / _user_accessible_project_ids; rename call sites to the canonical names from permissions.py. (2) permissions.py:35 \u00e2\u20ac\u201d drop int|Project polymorphic input; require Project objects only, callers fetch first. (3) permissions.py:65-68 \u00e2\u20ac\u201d invert empty-pass condition into positive form. (4) permissions.py:70-74 \u00e2\u20ac\u201d restructure dual-condition into one-case-per-block. (5) middleware.py:54 \u00e2\u20ac\u201d uuid.UUID only raises ValueError; drop AttributeError/TypeError from except. (6) middleware.py:31 \u00e2\u20ac\u201d delete user_id_var.set(None) (default already None on fresh starlette context). (7) logging_config.py:62-72 \u00e2\u20ac\u201d remove json.dumps probe loop; rely on default=str on outer dump. (8) logging_config.py:50 \u00e2\u20ac\u201d drop misplaced # noqa: D401.",
+        "testStrategy": "All 89 tests still green. grep confirms each removal landed. No new lints from ruff/eslint.",
+        "priority": "medium",
+        "dependencies": [
+          10,
+          11
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 19,
+        "title": "Frontend cleanup: AxiosSetup component + GuidedTour anti-patterns + focus trap",
+        "description": "AxiosSetup.tsx is a fake-component-for-side-effect (returns null, exists only to set axios.defaults). GuidedTour has a redundant `mounted` state, an eslint-disable that hides a stale-closure bug, and aria-modal=true without a focus trap (worse than no a11y).",
+        "details": "(1) Delete AxiosSetup.tsx; replace with `lib/axios-config.ts` that runs `axios.defaults.withCredentials = true` at module load; import once in layout.tsx. (2) GuidedTour.tsx \u00e2\u20ac\u201d remove `mounted` state (visible already starts false). (3) GuidedTour.tsx:99 \u00e2\u20ac\u201d fix the stale-closure: wrap `dismiss` in useCallback or inline the keydown handler; remove the eslint-disable. (4) Implement a real focus trap: when visible, capture focusable descendants of cardRef, cycle Tab between first/last; restore prior focus on close. Either roll a small trap or use react-focus-lock.",
+        "testStrategy": "1. grep AxiosSetup frontend/ returns zero matches. 2. GuidedTour test pinning Tab cycle (jsdom-supported assertions on document.activeElement after Tab keydown). 3. axe-core or @testing-library/jest-dom toHaveNoViolations on the rendered tour.",
+        "priority": "medium",
+        "dependencies": [
+          12
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 20,
+        "title": "Email template hardening + repo hygiene",
+        "description": "email_templates.py ships HTML-only (no multipart/alternative) \u00e2\u20ac\u201d undercuts Task 13's deliverability premise. README and .env.example both list every env var, will drift. Repo lacks .gitattributes \u00e2\u20ac\u201d every commit emits 60+ CRLF warnings.",
+        "details": "(1) Rename email_templates.py \u00e2\u2020\u2019 magic_link_email.py OR add a real template registry with the other transactional emails (invite, etc.). (2) Add a plain-text body alongside the HTML; pass both to Resend (resend supports `html` and `text` fields). (3) Add `.gitattributes` with `* text=auto eol=lf` plus exceptions for *.bat / *.ps1. (4) Strip the env var list from README; replace with a single line pointing at .env.example. (5) Verify the rename in (1) doesn't break auth.py imports.",
+        "testStrategy": "1. mail-tester.com still scores >=9/10 with multipart (improvement vs HTML-only baseline). 2. git commit on Windows shows zero CRLF warnings. 3. README env var section is gone or trimmed.",
+        "priority": "low",
+        "dependencies": [
+          13
+        ],
         "status": "done",
         "subtasks": []
       }

@@ -207,6 +207,15 @@ class StripeWebhookEvent(Base):
     payload_hash = Column(String, nullable=True)
 
 
+class RateLimitBucket(Base):
+    """Token-bucket rate-limit state, one row per composed key."""
+    __tablename__ = "rate_limit_buckets"
+
+    key = Column(String, primary_key=True)
+    count = Column(Integer, nullable=False, default=0)
+    window_start = Column(Float, nullable=False)
+
+
 class FactOverride(Base):
     """One row per (entity_type, entity_id, field_name) edit. Latest row wins."""
     __tablename__ = "fact_overrides"

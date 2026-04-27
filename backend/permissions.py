@@ -33,20 +33,10 @@ ORG_ROLE_RANK = {"owner": 3, "admin": 2, "member": 1}
 
 
 def effective_project_role(
-    db: Session, user: User, project: int | Project
+    db: Session, user: User, project_id: int
 ) -> Optional[str]:
-    """
-    Return the caller's effective role on the project, or None if no access.
-
-    `project` may be a Project instance or a project_id (int) — callers in the
-    codebase pass either.
-    """
-    if isinstance(project, Project):
-        project_obj = project
-        project_id = project.id
-    else:
-        project_id = int(project)
-        project_obj = db.query(Project).filter(Project.id == project_id).first()
+    """Return the caller's effective role on the project, or None if no access."""
+    project_obj = db.query(Project).filter(Project.id == project_id).first()
 
     pa = (
         db.query(ProjectAccess)
@@ -57,21 +47,17 @@ def effective_project_role(
         .first()
     )
     if pa:
-        # Cross-org safety: if the ProjectAccess row references a different
-        # org than the project currently belongs to, ignore it. Closes a
-        # tenant-isolation gap where a stale grant could persist after a
-        # project was reassigned.
+        # Cross-org safety: ignore ProjectAccess rows whose org_id no longer
+        # matches the project's current org (stale grant after reassignment).
         proj_org_id = project_obj.org_id if project_obj else None
-        if pa.org_id is not None and proj_org_id is not None and pa.org_id != proj_org_id:
-            pass  # fall through to org-membership lookup
-        else:
+        if pa.org_id is None or proj_org_id is None or pa.org_id == proj_org_id:
             return pa.role
+        # else fall through to org-membership lookup
 
-    if not project_obj or not project_obj.org_id:
-        # Legacy projects without org: allow creator through.
-        if project_obj and project_obj.created_by == user.id:
-            return "owner"
+    if not project_obj:
         return None
+    if not project_obj.org_id:
+        return "owner" if project_obj.created_by == user.id else None
 
     m = (
         db.query(OrgMembership)
@@ -141,7 +127,7 @@ def require_editor(role: Optional[str]) -> None:
 
 
 def require_project_role(
-    db: Session, user: User, project: int | Project, min_role: str = "viewer"
+    db: Session, user: User, project_id: int, min_role: str = "viewer"
 ) -> str:
     """
     Resolve the caller's effective role and gate on `min_role`.
@@ -150,7 +136,7 @@ def require_project_role(
       leak project existence to outsiders).
     - Raises 403 when the role is insufficient.
     """
-    role = effective_project_role(db, user, project)
+    role = effective_project_role(db, user, project_id)
     if role is None:
         raise HTTPException(status_code=404, detail="Project not found")
     if PROJECT_ROLE_RANK.get(role, 0) < PROJECT_ROLE_RANK.get(min_role, 0):
@@ -163,9 +149,9 @@ def require_project_role(
 
 def require_org_role(
     db: Session, user: User, org_id: int, min_role: str = "member"
-) -> str:
+) -> OrgMembership:
     """
-    Gate on organization-level role. Returns the role string on success.
+    Gate on organization-level role. Returns the OrgMembership on success.
     Raises 403 on missing membership or insufficient rank.
     """
     m = (
@@ -180,4 +166,4 @@ def require_org_role(
             status_code=403,
             detail=f"Requires '{min_role}' access on this organization",
         )
-    return m.role
+    return m

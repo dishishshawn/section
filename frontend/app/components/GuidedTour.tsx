@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export const TOUR_STORAGE_KEY = "section_tour_completed";
 
@@ -46,80 +46,70 @@ function storageKeyFor(userKey: string | number | null | undefined): string {
  * First-session 4-step guided tour. Renders as a dismissable overlay.
  * Persists completion in localStorage (per-user if `userKey` is supplied).
  */
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
 export default function GuidedTour({ open, onClose, userKey }: GuidedTourProps) {
-  const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState(0);
   const cardRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    setMounted(true);
     if (typeof window === "undefined") return;
-    if (open === true) {
-      setVisible(true);
-      return;
-    }
-    if (open === false) {
-      setVisible(false);
-      return;
-    }
-    // auto-detect on first load
+    if (open === true) { setVisible(true); return; }
+    if (open === false) { setVisible(false); return; }
     try {
-      const done = window.localStorage.getItem(storageKeyFor(userKey));
-      if (!done) setVisible(true);
-    } catch {
-      // localStorage may be unavailable — default to not showing
-    }
+      if (!window.localStorage.getItem(storageKeyFor(userKey))) setVisible(true);
+    } catch { /* localStorage unavailable */ }
   }, [open, userKey]);
 
-  const persistDismissal = () => {
+  const dismiss = useCallback(() => {
+    setVisible(false);
+    onClose?.();
+  }, [onClose]);
+
+  const close = useCallback(() => {
     try {
       if (typeof window !== "undefined") {
         window.localStorage.setItem(storageKeyFor(userKey), "1");
       }
-    } catch {
-      /* ignore */
-    }
-  };
+    } catch { /* ignore */ }
+    setVisible(false);
+    onClose?.();
+  }, [onClose, userKey]);
 
-  // Esc to close + focus management
+  // Esc + focus trap
   useEffect(() => {
     if (!visible) return;
     previousFocusRef.current = document.activeElement as HTMLElement;
     cardRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") dismiss();
+      if (e.key === "Escape") { dismiss(); return; }
+      if (e.key !== "Tab" || !cardRef.current) return;
+      const focusables = cardRef.current.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (focusables.length === 0) { e.preventDefault(); return; }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || active === cardRef.current)) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault(); first.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
       previousFocusRef.current?.focus();
     };
-  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Persist + close (Skip / Finish / backdrop-after-explicit-intent)
-  const close = () => {
-    persistDismissal();
-    setVisible(false);
-    onClose?.();
-  };
-
-  // Temporary dismiss without persisting (backdrop misclick)
-  const dismiss = () => {
-    setVisible(false);
-    onClose?.();
-  };
+  }, [visible, dismiss]);
 
   const next = () => {
-    if (step < STEPS.length - 1) {
-      setStep(step + 1);
-    } else {
-      close();
-    }
+    if (step < STEPS.length - 1) setStep(step + 1);
+    else close();
   };
 
-  if (!mounted || !visible) return null;
+  if (!visible) return null;
 
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
