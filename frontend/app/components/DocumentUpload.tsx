@@ -604,22 +604,75 @@ function renderFieldValue(v: unknown): React.ReactNode {
   return String(v);
 }
 
-function ExtractedFields({ fields, compact = false }: { fields: any; compact?: boolean }) {
+function tryParsePages(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  return tryParseJsonObject(value);
+}
+
+function ExtractedFields({
+  fields,
+  compact = false,
+  pages,
+}: {
+  fields: any;
+  compact?: boolean;
+  pages?: Record<string, unknown> | null;
+}) {
   if (!fields || typeof fields !== "object") return null;
-  const entries = Object.entries(fields).filter(
-    ([, v]) => v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0),
-  );
+
+  // Pages may travel alongside quotes in the parent record. Pull them out
+  // so we can annotate quote rows with their source page.
+  const localPages = tryParsePages(fields.source_pages) ?? null;
+  const childPages = pages ?? localPages;
+
+  const isUsefulValue = (v: unknown): boolean => {
+    if (v === null || v === undefined || v === "") return false;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") {
+      const inner = Object.values(v as Record<string, unknown>).filter(isUsefulValue);
+      return inner.length > 0;
+    }
+    const nested = tryParseJsonObject(v);
+    if (nested) {
+      return Object.values(nested).filter(isUsefulValue).length > 0;
+    }
+    return true;
+  };
+
+  const entries = Object.entries(fields)
+    .filter(([k]) => k !== "source_pages")
+    .filter(([, v]) => isUsefulValue(v));
+
   if (entries.length === 0) {
     return <div className="text-xs text-ink-3 font-serif-italic">No fields extracted.</div>;
   }
+
   return (
     <dl className={`grid grid-cols-[max-content_1fr] gap-x-5 ${compact ? "gap-y-0.5 mt-1" : "gap-y-1.5"} text-sm`}>
-      {entries.map(([k, v]) => (
-        <Fragment key={k}>
-          <dt className="text-ink-3 font-serif-italic capitalize self-start">{k.replace(/_/g, " ")}</dt>
-          <dd className="text-ink break-words">{renderFieldValue(v)}</dd>
-        </Fragment>
-      ))}
+      {entries.map(([k, v]) => {
+        const nested = tryParseJsonObject(v);
+        const isQuotesGroup = k === "source_quotes" && nested;
+        const pageForKey = childPages && k in childPages ? childPages[k] : undefined;
+
+        return (
+          <Fragment key={k}>
+            <dt className="text-ink-3 font-serif-italic capitalize self-start">
+              {k.replace(/_/g, " ")}
+              {pageForKey != null && pageForKey !== "" && (
+                <span className="ml-1.5 text-ink-3/70 tabular text-xs">p. {String(pageForKey)}</span>
+              )}
+            </dt>
+            <dd className="text-ink break-words">
+              {isQuotesGroup ? (
+                <ExtractedFields fields={nested!} compact pages={localPages} />
+              ) : (
+                renderFieldValue(v)
+              )}
+            </dd>
+          </Fragment>
+        );
+      })}
     </dl>
   );
 }
