@@ -5,46 +5,79 @@ import axios from "axios";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+type Step = "email" | "code";
+
 export default function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
+  const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const requestLink = async (e: React.FormEvent) => {
+  const formatRetry = (err: any): string => {
+    const retryAfter = Number(err.response?.headers?.["retry-after"]);
+    const detail = err.response?.data?.detail;
+    const waitMsg =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? ` Try again in ${
+            retryAfter >= 60
+              ? `${Math.ceil(retryAfter / 60)} min`
+              : `${retryAfter}s`
+          }.`
+        : "";
+    return (detail || "Too many attempts.") + waitMsg;
+  };
+
+  const requestCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
       const res = await axios.post(
-        `${API_URL}/auth/request-link`,
+        `${API_URL}/auth/request-code`,
         { email: email.trim().toLowerCase() },
-        { withCredentials: true }
+        { withCredentials: true },
       );
-      if (res.data?.dev_link) {
-        // Dev mode: backend returned the link — navigate in this tab
-        window.location.href = res.data.dev_link;
+      // Dev mode: backend echoes the code so we can prefill it for testing.
+      if (res.data?.dev_code) {
+        setCode(res.data.dev_code);
+      }
+      setStep("code");
+    } catch (err: any) {
+      setError(
+        err.response?.status === 429
+          ? formatRetry(err)
+          : err.response?.data?.detail || "Failed to send code",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const verifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await axios.post(
+        `${API_URL}/auth/verify-code`,
+        { email: email.trim().toLowerCase(), code: code.trim() },
+        { withCredentials: true },
+      );
+      // Resume a pending invite flow if the user came from an invite link.
+      const pendingInvite = sessionStorage.getItem("pending_invite_token");
+      if (pendingInvite) {
+        sessionStorage.removeItem("pending_invite_token");
+        window.location.href = `/invite/${pendingInvite}`;
         return;
       }
-      setSent(true);
+      onSignedIn();
     } catch (err: any) {
-      if (err.response?.status === 429) {
-        const retryAfter = Number(err.response.headers?.["retry-after"]);
-        const detail = err.response.data?.detail;
-        const waitMsg =
-          Number.isFinite(retryAfter) && retryAfter > 0
-            ? ` Try again in ${
-                retryAfter >= 60
-                  ? `${Math.ceil(retryAfter / 60)} min`
-                  : `${retryAfter}s`
-              }.`
-            : "";
-        setError(
-          (detail || "Too many sign-in attempts.") + waitMsg
-        );
-      } else {
-        setError(err.response?.data?.detail || "Failed to send link");
-      }
+      setError(
+        err.response?.status === 429
+          ? formatRetry(err)
+          : err.response?.data?.detail || "Invalid code",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -63,21 +96,8 @@ export default function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
           </p>
         </div>
 
-        {sent ? (
-          <div className="border-l-[3px] border-positive pl-5 py-2">
-            <div className="font-display text-lg text-ink">Check your email</div>
-            <p className="mt-1 text-[0.95rem] font-serif-italic text-ink-2">
-              Link sent to <strong>{email}</strong>. Opens in this tab.
-            </p>
-            <button
-              className="mt-4 text-sm text-ink-3 font-serif-italic underline underline-offset-2 hover:text-ink transition-colors"
-              onClick={() => { setSent(false); setEmail(""); }}
-            >
-              Use a different address
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={requestLink}>
+        {step === "email" ? (
+          <form onSubmit={requestCode}>
             <div className="border border-line-strong bg-surface rounded-sm overflow-hidden">
               <div className="grid grid-cols-[1fr_auto] divide-x divide-line-strong">
                 <input
@@ -94,7 +114,7 @@ export default function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
                   disabled={submitting}
                   className="px-6 py-4 bg-ink text-paper font-medium hover:bg-accent transition-colors disabled:bg-ink-3 disabled:cursor-not-allowed text-sm whitespace-nowrap"
                 >
-                  {submitting ? "Sending…" : "Send link →"}
+                  {submitting ? "Sending…" : "Send code →"}
                 </button>
               </div>
             </div>
@@ -102,8 +122,47 @@ export default function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
               <p className="mt-3 text-sm font-serif-italic text-rust">{error}</p>
             )}
             <p className="mt-4 text-xs font-serif-italic text-ink-3">
-              No password. A sign-in link is sent to your email — valid for 15 minutes.
+              No password. We email a 6-digit code — valid for 10 minutes.
             </p>
+          </form>
+        ) : (
+          <form onSubmit={verifyCode}>
+            <p className="mb-3 text-sm font-serif-italic text-ink-2">
+              Code sent to <strong className="text-ink">{email}</strong>
+            </p>
+            <div className="border border-line-strong bg-surface rounded-sm overflow-hidden">
+              <div className="grid grid-cols-[1fr_auto] divide-x divide-line-strong">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  placeholder="000000"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                  required
+                  autoFocus
+                  className="px-5 py-4 bg-surface text-ink placeholder:text-ink-3 focus:outline-none focus:bg-accent-tint transition-colors text-[1.4rem] tracking-[0.4em] font-mono"
+                />
+                <button
+                  type="submit"
+                  disabled={submitting || code.length !== 6}
+                  className="px-6 py-4 bg-ink text-paper font-medium hover:bg-accent transition-colors disabled:bg-ink-3 disabled:cursor-not-allowed text-sm whitespace-nowrap"
+                >
+                  {submitting ? "Verifying…" : "Sign in →"}
+                </button>
+              </div>
+            </div>
+            {error && (
+              <p className="mt-3 text-sm font-serif-italic text-rust">{error}</p>
+            )}
+            <button
+              type="button"
+              onClick={() => { setStep("email"); setCode(""); setError(null); }}
+              className="mt-4 text-sm text-ink-3 font-serif-italic underline underline-offset-2 hover:text-ink transition-colors"
+            >
+              Use a different email
+            </button>
           </form>
         )}
       </div>

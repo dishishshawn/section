@@ -1,15 +1,15 @@
 import os
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from auth import (
+    consume_code,
     get_current_user,
-    make_magic_token,
+    is_email_allowed,
+    issue_code,
     make_session_cookie,
-    send_magic_link,
-    verify_magic_token,
+    send_verification_code,
     SESSION_TTL_SECONDS,
     IS_PRODUCTION,
 )
@@ -21,19 +21,22 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 SESSION_COOKIE = "section_session"
 _dev_mode = not os.getenv("RESEND_API_KEY")
-APP_URL = os.getenv("APP_URL", "http://localhost:3000").rstrip("/")
 
 
-class RequestLinkBody(BaseModel):
+class RequestCodeBody(BaseModel):
     email: EmailStr
 
 
-class RequestLinkResponse(BaseModel):
-    dev_link: str | None = None
+class RequestCodeResponse(BaseModel):
+    # Generic acknowledgement — never reveals whether the email is allowed,
+    # to prevent enumeration. Dev mode echoes the code for local testing.
+    sent: bool = True
+    dev_code: str | None = None
 
 
-class VerifyCompleteBody(BaseModel):
-    token: str
+class VerifyCodeBody(BaseModel):
+    email: EmailStr
+    code: str
 
 
 class MeResponse(BaseModel):
@@ -48,65 +51,73 @@ def _normalize_email(raw: str) -> str:
     return raw.strip().lower()
 
 
-@router.post("/request-link", response_model=RequestLinkResponse)
-def request_link(
-    body: RequestLinkBody,
+@router.post("/request-code", response_model=RequestCodeResponse)
+def request_code(
+    body: RequestCodeBody,
     request: Request,
     db: Session = Depends(get_db),
 ):
     """
-    Generate a magic link for the email and send it. Intentionally does NOT
-    create a User row here — account creation happens on /verify-complete
-    so anonymous POSTs can't fill the users table.
+    Email a 6-digit code to `email` if it belongs to a known user, an active
+    invite, or the bootstrap allowlist. Always returns the same shape so a
+    caller can't tell whether an address is on the allowlist.
     """
     email = _normalize_email(body.email)
-    # Anti-abuse: cap per-email (mailbox flooding / Resend bill) and per-IP
-    # (enumeration sweeps). Enforce IP first so a single noisy client can't
-    # prime N email buckets before being blocked.
     enforce_rate_limit(
         db,
-        key=f"auth:request-link:ip:{client_ip(request)}",
+        key=f"auth:request-code:ip:{client_ip(request)}",
         max_count=10,
         window_seconds=60,
         detail="Too many sign-in attempts from this network. Try again in a minute.",
     )
     enforce_rate_limit(
         db,
-        key=f"auth:request-link:email:{email}",
+        key=f"auth:request-code:email:{email}",
         max_count=5,
         window_seconds=3600,
-        detail="Too many sign-in links requested for this email. Try again later.",
+        detail="Too many sign-in codes requested for this email. Try again later.",
     )
-    token = make_magic_token(email)
-    send_magic_link(email, token)
+
+    if not is_email_allowed(db, email):
+        # Silently no-op on disallowed emails — same response shape, no code
+        # generated, no email sent. Rate-limit counter still ticks above so
+        # an attacker can't enumerate by timing or count.
+        return RequestCodeResponse()
+
+    code = issue_code(db, email)
+    send_verification_code(email, code)
     if _dev_mode and not IS_PRODUCTION:
-        return {"dev_link": f"{APP_URL}/auth/verify?token={token}"}
-    return {}
+        return RequestCodeResponse(dev_code=code)
+    return RequestCodeResponse()
 
 
-@router.get("/verify")
-def verify_redirect(token: str):
-    """
-    GET is non-mutating: it merely redirects the browser to the frontend
-    verification page. The frontend then POSTs to /verify-complete to
-    actually exchange the token for a session. This prevents email link
-    preview bots and antivirus scanners from burning tokens.
-    """
-    return RedirectResponse(
-        url=f"{APP_URL}/auth/verify?token={token}",
-        status_code=303,
+@router.post("/verify-code", response_model=MeResponse)
+def verify_code(
+    body: VerifyCodeBody,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    email = _normalize_email(body.email)
+    # Per-IP cap on verify too — defends the 10^6 space across multiple emails.
+    enforce_rate_limit(
+        db,
+        key=f"auth:verify-code:ip:{client_ip(request)}",
+        max_count=20,
+        window_seconds=60,
+        detail="Too many code attempts. Try again in a minute.",
     )
+    consume_code(db, email, body.code)
 
-
-@router.post("/verify-complete", response_model=MeResponse)
-def verify_complete(body: VerifyCompleteBody, response: Response, db: Session = Depends(get_db)):
-    email = _normalize_email(verify_magic_token(body.token))
     user = db.query(User).filter(User.email == email).first()
     if not user:
+        # Code consumed → email passed the allowlist gate at request time, so
+        # this is the legitimate first sign-in for an invitee or bootstrap email.
         user = User(email=email, session_version=0)
         db.add(user)
         db.commit()
         db.refresh(user)
+
     cookie = make_session_cookie(user.id, user.session_version or 0)
     response.set_cookie(
         key=SESSION_COOKIE,
@@ -126,7 +137,6 @@ def signout(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # Bump the user's session_version so every outstanding token is invalidated.
     user.session_version = (user.session_version or 0) + 1
     db.add(user)
     db.commit()

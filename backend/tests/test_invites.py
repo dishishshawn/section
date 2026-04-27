@@ -36,7 +36,7 @@ def test_accept_invite_email_case_insensitive(authenticated_client, seed, db):
     token = db.query(models.OrgInvite).filter_by(id=body["id"]).first().token
 
     # Create the user with already-normalized lowercase email to match what
-    # request-link / verify-complete would do in production.
+    # request-code / verify-code would do in production.
     u = models.User(email="mixedcase@a.test", display_name="Newbie")
     db.add(u)
     db.commit()

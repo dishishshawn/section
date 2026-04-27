@@ -192,6 +192,23 @@ class OrgInvite(Base):
     inviter = relationship("User", foreign_keys=[invited_by])
 
 
+class EmailVerificationCode(Base):
+    """Short-lived 6-digit code for passwordless sign-in.
+
+    Only one row per email at a time — request_code deletes prior rows for
+    the same email so a fresh code invalidates any outstanding one.
+    """
+    __tablename__ = "email_verification_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, nullable=False, index=True)
+    code_hash = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    consumed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class StripeWebhookEvent(Base):
     """Idempotency ledger for Stripe webhook events.
 

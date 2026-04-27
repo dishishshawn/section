@@ -11,19 +11,24 @@ from __future__ import annotations
 from rate_limit import check_rate_limit
 
 
-def test_request_link_email_bucket_trips_on_sixth(client, monkeypatch):
-    """5 magic-link requests for the same email succeed; the 6th returns 429."""
+def test_request_code_email_bucket_trips_on_sixth(client, monkeypatch):
+    """5 code requests for the same email succeed; the 6th returns 429.
+
+    Email is on the bootstrap allowlist so each request actually issues a
+    code (otherwise the silent no-op path would still consume the bucket
+    but skip code creation — both are fine, but we want to assert against
+    the success path here)."""
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.setenv("AUTH_BOOTSTRAP_EMAILS", "floodtarget@example.com")
     email = "floodtarget@example.com"
 
     for i in range(5):
-        r = client.post("/api/auth/request-link", json={"email": email})
+        r = client.post("/api/auth/request-code", json={"email": email})
         assert r.status_code == 200, f"request {i + 1} should succeed, got {r.status_code}"
 
-    r = client.post("/api/auth/request-link", json={"email": email})
+    r = client.post("/api/auth/request-code", json={"email": email})
     assert r.status_code == 429
     assert "Retry-After" in r.headers
-    # Detail is human-readable, not a bare JSON-schema shape
     assert "email" in r.json()["detail"].lower() or "sign-in" in r.json()["detail"].lower()
 
 
@@ -51,7 +56,6 @@ def test_invite_org_bucket_trips_on_twentyfirst(client, authenticated_client, se
 def test_different_keys_dont_share_bucket(db):
     """Two distinct keys each get their own counter — a hot key does not
     starve an unrelated one."""
-    # Fill key A up to its limit.
     for _ in range(3):
         allowed, _ = check_rate_limit(db, "test:bucket:A", max_count=3, window_seconds=60)
         assert allowed
@@ -59,7 +63,6 @@ def test_different_keys_dont_share_bucket(db):
     assert not blocked
     assert retry_after > 0
 
-    # Key B is untouched and should still allow requests under the same limit.
     allowed, _ = check_rate_limit(db, "test:bucket:B", max_count=3, window_seconds=60)
     assert allowed
     allowed, _ = check_rate_limit(db, "test:bucket:B", max_count=3, window_seconds=60)

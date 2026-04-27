@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth import get_current_user, send_magic_link
+from auth import get_current_user
 from database import get_db
 from rate_limit import client_ip, enforce_rate_limit
 from permissions import require_org_role, require_project_role
