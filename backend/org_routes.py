@@ -43,11 +43,7 @@ PROJECT_ROLE_RANK = {"owner": 3, "editor": 2, "viewer": 1}
 
 
 def _org_membership(db: Session, user: User, org_id: int) -> OrgMembership | None:
-    return (
-        db.query(OrgMembership)
-        .filter(OrgMembership.user_id == user.id, OrgMembership.org_id == org_id)
-        .first()
-    )
+    return db.query(OrgMembership).filter(OrgMembership.user_id == user.id, OrgMembership.org_id == org_id).first()
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +76,7 @@ class MemberResponse(BaseModel):
 
 class InviteBody(BaseModel):
     email: str
-    role: str = "member"          # org-level role for new member
+    role: str = "member"  # org-level role for new member
     project_id: int | None = None
     project_role: str | None = None
 
@@ -139,9 +135,7 @@ def list_my_orgs(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    memberships = (
-        db.query(OrgMembership).filter(OrgMembership.user_id == user.id).all()
-    )
+    memberships = db.query(OrgMembership).filter(OrgMembership.user_id == user.id).all()
     result = []
     for m in memberships:
         org = m.org
@@ -186,9 +180,7 @@ def list_members(
     user: User = Depends(get_current_user),
 ):
     require_org_role(db, user, org_id, "member")
-    memberships = (
-        db.query(OrgMembership).filter(OrgMembership.org_id == org_id).all()
-    )
+    memberships = db.query(OrgMembership).filter(OrgMembership.org_id == org_id).all()
     return [
         MemberResponse(
             user_id=m.user_id,
@@ -267,9 +259,7 @@ def remove_member(
 # ---------------------------------------------------------------------------
 
 
-def _send_invite_email(
-    invited_email: str, org_name: str, token: str, inviter_display: str
-) -> str:
+def _send_invite_email(invited_email: str, org_name: str, token: str, inviter_display: str) -> str:
     """Send invite email. Returns the link (always, for dev echo)."""
     app_url = os.getenv("APP_URL", "http://localhost:3000")
     link = f"{app_url}/invite/{token}"
@@ -578,11 +568,7 @@ def _stripe_adjust_seats(db: Session, org_id: int):
     if not org or not org.stripe_subscription_id:
         return
 
-    seat_count = (
-        db.query(OrgMembership)
-        .filter(OrgMembership.org_id == org_id)
-        .count()
-    )
+    seat_count = db.query(OrgMembership).filter(OrgMembership.org_id == org_id).count()
 
     try:
         import stripe  # type: ignore

@@ -7,11 +7,11 @@ Revision ID: 0002_stripe_webhook_events
 Revises: 0001_initial
 Create Date: 2026-04-23
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-
 
 revision: str = "0002_stripe_webhook_events"
 down_revision: Union[str, None] = "0001_initial"
@@ -34,9 +34,7 @@ def upgrade() -> None:
         sa.Column("payload_hash", sa.String(), nullable=True),
         sa.UniqueConstraint("event_id", name="uq_stripe_webhook_events_event_id"),
     )
-    op.create_index(
-        "ix_stripe_webhook_events_id", "stripe_webhook_events", ["id"]
-    )
+    op.create_index("ix_stripe_webhook_events_id", "stripe_webhook_events", ["id"])
     op.create_index(
         "ix_stripe_webhook_events_event_id",
         "stripe_webhook_events",
@@ -53,13 +51,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_organizations_stripe_customer_id", table_name="organizations"
-    )
-    op.drop_index(
-        "ix_stripe_webhook_events_event_id", table_name="stripe_webhook_events"
-    )
-    op.drop_index(
-        "ix_stripe_webhook_events_id", table_name="stripe_webhook_events"
-    )
+    op.drop_index("ix_organizations_stripe_customer_id", table_name="organizations")
+    op.drop_index("ix_stripe_webhook_events_event_id", table_name="stripe_webhook_events")
+    op.drop_index("ix_stripe_webhook_events_id", table_name="stripe_webhook_events")
     op.drop_table("stripe_webhook_events")

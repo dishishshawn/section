@@ -138,17 +138,11 @@ def test_duplicate_event_id_is_idempotent(client, seed, monkeypatch, db):
     assert org.billing_status == "past_due"
 
     # Ledger contains exactly one row for this event_id.
-    ledger = (
-        db.query(models.StripeWebhookEvent)
-        .filter_by(event_id="evt_dedupe_1")
-        .all()
-    )
+    ledger = db.query(models.StripeWebhookEvent).filter_by(event_id="evt_dedupe_1").all()
     assert len(ledger) == 1
 
 
-def test_missing_metadata_org_id_falls_back_to_customer(
-    client, seed, monkeypatch, db
-):
+def test_missing_metadata_org_id_falls_back_to_customer(client, seed, monkeypatch, db):
     """Events without metadata.org_id are still routed via customer_id."""
     import models
 
@@ -185,9 +179,7 @@ def test_missing_metadata_org_id_falls_back_to_customer(
     assert org.billing_status == "active"
 
 
-def test_subscription_deleted_updates_billing_status(
-    client, seed, monkeypatch, db
-):
+def test_subscription_deleted_updates_billing_status(client, seed, monkeypatch, db):
     """customer.subscription.deleted flips org billing_status to 'canceled'."""
     import models
 

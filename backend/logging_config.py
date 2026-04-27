@@ -11,6 +11,7 @@ Usage:
     log = get_logger(__name__)
     log.info("something happened", extra={"foo": "bar"})
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -24,23 +25,36 @@ from typing import Any
 # Contextvars populated by RequestIDMiddleware / auth dependencies. These are
 # read on every log record so emitted JSON always carries request correlation
 # data when available.
-request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "request_id", default=None
-)
-user_id_var: contextvars.ContextVar[int | None] = contextvars.ContextVar(
-    "user_id", default=None
-)
-route_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "route", default=None
-)
+request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
+user_id_var: contextvars.ContextVar[int | None] = contextvars.ContextVar("user_id", default=None)
+route_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("route", default=None)
 
 
 # Reserved LogRecord attrs we skip when serializing `extra` fields.
 _RESERVED_RECORD_ATTRS = {
-    "args", "asctime", "created", "exc_info", "exc_text", "filename",
-    "funcName", "levelname", "levelno", "lineno", "message", "module",
-    "msecs", "msg", "name", "pathname", "process", "processName",
-    "relativeCreated", "stack_info", "thread", "threadName", "taskName",
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "message",
+    "module",
+    "msecs",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+    "taskName",
 }
 
 

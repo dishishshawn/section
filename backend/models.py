@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
 
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -21,6 +22,7 @@ class Project(Base):
     obligations = relationship("Obligation", back_populates="project")
     project_accesses = relationship("ProjectAccess", back_populates="project", cascade="all, delete-orphan")
 
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -36,6 +38,7 @@ class Document(Base):
 
     project = relationship("Project", back_populates="documents")
 
+
 class Tract(Base):
     __tablename__ = "tracts"
 
@@ -46,6 +49,7 @@ class Tract(Base):
 
     project = relationship("Project", back_populates="tracts")
     interests = relationship("Interest", back_populates="tract")
+
 
 class Party(Base):
     __tablename__ = "parties"
@@ -58,6 +62,7 @@ class Party(Base):
     project = relationship("Project", back_populates="parties")
     interests = relationship("Interest", back_populates="party")
 
+
 class Instrument(Base):
     __tablename__ = "instruments"
 
@@ -69,6 +74,7 @@ class Instrument(Base):
     extracted_data = Column(JSON, nullable=True)
 
     project = relationship("Project", back_populates="instruments")
+
 
 class Interest(Base):
     __tablename__ = "interests"
@@ -83,6 +89,7 @@ class Interest(Base):
 
     tract = relationship("Tract", back_populates="interests")
     party = relationship("Party", back_populates="interests")
+
 
 class Obligation(Base):
     __tablename__ = "obligations"
@@ -109,11 +116,14 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     memberships = relationship("OrgMembership", back_populates="user", cascade="all, delete-orphan")
-    project_accesses = relationship("ProjectAccess", foreign_keys="ProjectAccess.user_id", back_populates="user", cascade="all, delete-orphan")
+    project_accesses = relationship(
+        "ProjectAccess", foreign_keys="ProjectAccess.user_id", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Organization(Base):
     """A landman shop / company. All users belong to at least one org."""
+
     __tablename__ = "organizations"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -135,6 +145,7 @@ class OrgMembership(Base):
     One row per (user, org). Role governs org-level permissions.
     Roles: owner | admin | member
     """
+
     __tablename__ = "org_memberships"
     __table_args__ = (UniqueConstraint("user_id", "org_id", name="uq_user_org"),)
 
@@ -154,6 +165,7 @@ class ProjectAccess(Base):
     Per-project role overrides. If absent, falls back to org-level role.
     Roles: owner | editor | viewer
     """
+
     __tablename__ = "project_access"
     __table_args__ = (UniqueConstraint("user_id", "project_id", name="uq_user_project"),)
 
@@ -174,6 +186,7 @@ class ProjectAccess(Base):
 
 class OrgInvite(Base):
     """Pending invite: owner sends email → token → new member joins org."""
+
     __tablename__ = "org_invites"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -198,6 +211,7 @@ class EmailVerificationCode(Base):
     Only one row per email at a time — request_code deletes prior rows for
     the same email so a fresh code invalidates any outstanding one.
     """
+
     __tablename__ = "email_verification_codes"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -215,6 +229,7 @@ class StripeWebhookEvent(Base):
     Every incoming event_id is inserted BEFORE processing so a retry of the
     same delivery cannot double-apply side effects.
     """
+
     __tablename__ = "stripe_webhook_events"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -226,6 +241,7 @@ class StripeWebhookEvent(Base):
 
 class RateLimitBucket(Base):
     """Token-bucket rate-limit state, one row per composed key."""
+
     __tablename__ = "rate_limit_buckets"
 
     key = Column(String, primary_key=True)
@@ -235,16 +251,17 @@ class RateLimitBucket(Base):
 
 class FactOverride(Base):
     """One row per (entity_type, entity_id, field_name) edit. Latest row wins."""
+
     __tablename__ = "fact_overrides"
 
     id = Column(Integer, primary_key=True, index=True)
-    entity_type = Column(String, nullable=False)   # "instrument" | "interest" | "party"
+    entity_type = Column(String, nullable=False)  # "instrument" | "interest" | "party"
     entity_id = Column(Integer, nullable=False)
     field_name = Column(String, nullable=False)
     old_value = Column(Text, nullable=True)
     new_value = Column(Text, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    user_display = Column(String, nullable=True)   # denorm for fast reads without join
+    user_display = Column(String, nullable=True)  # denorm for fast reads without join
     reason = Column(Text, nullable=True)
     changed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

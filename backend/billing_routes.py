@@ -50,11 +50,7 @@ def create_checkout_session(
     if not org:
         raise HTTPException(status_code=404, detail="Org not found")
 
-    seat_count = (
-        db.query(OrgMembership)
-        .filter(OrgMembership.org_id == body.org_id)
-        .count()
-    )
+    seat_count = db.query(OrgMembership).filter(OrgMembership.org_id == body.org_id).count()
 
     try:
         import stripe  # type: ignore
@@ -104,21 +100,13 @@ def _resolve_org_from_event(db: Session, data: dict) -> Organization | None:
     org_id = metadata.get("org_id")
     if org_id:
         try:
-            return (
-                db.query(Organization)
-                .filter(Organization.id == int(org_id))
-                .first()
-            )
+            return db.query(Organization).filter(Organization.id == int(org_id)).first()
         except (TypeError, ValueError):
             pass
 
     customer_id = data.get("customer")
     if customer_id:
-        return (
-            db.query(Organization)
-            .filter(Organization.stripe_customer_id == customer_id)
-            .first()
-        )
+        return db.query(Organization).filter(Organization.stripe_customer_id == customer_id).first()
     return None
 
 
@@ -148,9 +136,7 @@ async def stripe_webhook(
         import stripe  # type: ignore
 
         stripe.api_key = stripe_key
-        event = stripe.Webhook.construct_event(
-            payload, stripe_signature, webhook_secret
-        )
+        event = stripe.Webhook.construct_event(payload, stripe_signature, webhook_secret)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Webhook error: {exc}")
 
@@ -161,11 +147,7 @@ async def stripe_webhook(
     # Cheap pre-check so already-processed retries short-circuit without
     # taking a write lock. The atomic ledger insert below is the real guard.
     if event_id:
-        existing = (
-            db.query(StripeWebhookEvent)
-            .filter(StripeWebhookEvent.event_id == event_id)
-            .first()
-        )
+        existing = db.query(StripeWebhookEvent).filter(StripeWebhookEvent.event_id == event_id).first()
         if existing:
             return {"received": True, "duplicate": True}
 
@@ -222,9 +204,7 @@ def get_billing_status(
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Org not found")
-    seat_count = (
-        db.query(OrgMembership).filter(OrgMembership.org_id == org_id).count()
-    )
+    seat_count = db.query(OrgMembership).filter(OrgMembership.org_id == org_id).count()
     return {
         "org_id": org_id,
         "billing_status": org.billing_status,
@@ -248,9 +228,7 @@ def reconcile_seats(
     if not org:
         raise HTTPException(status_code=404, detail="Org not found")
 
-    seat_count = (
-        db.query(OrgMembership).filter(OrgMembership.org_id == org_id).count()
-    )
+    seat_count = db.query(OrgMembership).filter(OrgMembership.org_id == org_id).count()
 
     stripe_key = os.getenv("STRIPE_SECRET_KEY")
     pushed = False

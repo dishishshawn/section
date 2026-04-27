@@ -6,6 +6,7 @@ Ensures:
   3. A non-UUID client value is ignored (we mint our own)
   4. JsonFormatter emits valid JSON with the expected keys
 """
+
 from __future__ import annotations
 
 import io
@@ -88,6 +89,7 @@ def test_json_formatter_emits_json_with_context():
 def test_sentry_noop_without_dsn(monkeypatch):
     """Sentry init is a safe no-op when SENTRY_DSN isn't set (the test env)."""
     import os
+
     assert not os.getenv("SENTRY_DSN"), "SENTRY_DSN must not be set in tests"
     # Reaching here without import errors means main.py imported cleanly
     # with the Sentry block skipped.

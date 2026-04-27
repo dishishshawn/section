@@ -18,27 +18,29 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AliquotPart:
     """One quarter-call in an aliquot chain, e.g. 'NE/4' or 'SW/4 NE/4'."""
-    quarters: list[str]           # ['NE', 'SW'] means SW/4 of NE/4 (inner-first order)
-    lots: list[int] = field(default_factory=list)   # government survey lots
+
+    quarters: list[str]  # ['NE', 'SW'] means SW/4 of NE/4 (inner-first order)
+    lots: list[int] = field(default_factory=list)  # government survey lots
     gross_acres: Optional[float] = None
 
 
 @dataclass
 class ParsedSection:
     """A single section reference extracted from a legal description."""
-    section: Optional[int] = None         # 1-36
+
+    section: Optional[int] = None  # 1-36
     township_number: Optional[int] = None
-    township_dir: Optional[str] = None    # 'N' or 'S'
+    township_dir: Optional[str] = None  # 'N' or 'S'
     range_number: Optional[int] = None
-    range_dir: Optional[str] = None       # 'E' or 'W'
+    range_dir: Optional[str] = None  # 'E' or 'W'
     principal_meridian: Optional[str] = None
     aliquot_parts: list[AliquotPart] = field(default_factory=list)
     gross_acres: Optional[float] = None
@@ -47,9 +49,10 @@ class ParsedSection:
 @dataclass
 class ParsedLegalDescription:
     """Result of parsing one legal-description string."""
+
     raw: str
     is_plss: bool = False
-    description_type: str = "unknown"   # 'plss', 'lot_block', 'texas_abstract', 'metes_bounds', 'unknown'
+    description_type: str = "unknown"  # 'plss', 'lot_block', 'texas_abstract', 'metes_bounds', 'unknown'
     sections: list[ParsedSection] = field(default_factory=list)
     # For non-PLSS types
     abstract_number: Optional[str] = None
@@ -80,8 +83,7 @@ _RE_RNG = re.compile(
 )
 
 _RE_ALIQUOT = re.compile(
-    r"\b(N½|S½|E½|W½|NE(?:/4|¼)?|NW(?:/4|¼)?|SE(?:/4|¼)?|SW(?:/4|¼)?|"
-    r"N/2|S/2|E/2|W/2)\b",
+    r"\b(N½|S½|E½|W½|NE(?:/4|¼)?|NW(?:/4|¼)?|SE(?:/4|¼)?|SW(?:/4|¼)?|" r"N/2|S/2|E/2|W/2)\b",
     re.IGNORECASE,
 )
 
@@ -111,16 +113,30 @@ _RE_METES = re.compile(
 )
 
 _QUARTER_NORMALIZE = {
-    "n½": "N2", "s½": "S2", "e½": "E2", "w½": "W2",
-    "n/2": "N2", "s/2": "S2", "e/2": "E2", "w/2": "W2",
-    "ne/4": "NE", "nw/4": "NW", "se/4": "SE", "sw/4": "SW",
-    "ne¼": "NE", "nw¼": "NW", "se¼": "SE", "sw¼": "SW",
+    "n½": "N2",
+    "s½": "S2",
+    "e½": "E2",
+    "w½": "W2",
+    "n/2": "N2",
+    "s/2": "S2",
+    "e/2": "E2",
+    "w/2": "W2",
+    "ne/4": "NE",
+    "nw/4": "NW",
+    "se/4": "SE",
+    "sw/4": "SW",
+    "ne¼": "NE",
+    "nw¼": "NW",
+    "se¼": "SE",
+    "sw¼": "SW",
 }
 
 
 def _normalize_quarter(raw: str) -> str:
     key = raw.lower().replace(" ", "")
-    return _QUARTER_NORMALIZE.get(key, raw.upper().replace("/4", "").replace("¼", "").replace("½", "2").replace("/2", "2"))
+    return _QUARTER_NORMALIZE.get(
+        key, raw.upper().replace("/4", "").replace("¼", "").replace("½", "2").replace("/2", "2")
+    )
 
 
 def _parse_acres(text: str) -> Optional[float]:
@@ -190,7 +206,9 @@ def parse_legal_description(desc: str) -> ParsedLegalDescription:
         result.is_plss = False
         lm = re.search(r"Lot\s+(\w+)", raw, re.IGNORECASE)
         bm = re.search(r"Block\s+(\w+)", raw, re.IGNORECASE)
-        sm_sub = re.search(r"(?:Subdivision|Addition)\s+(?:of\s+)?([A-Za-z][A-Za-z .]+?)(?:\s*,|\s*$)", raw, re.IGNORECASE)
+        sm_sub = re.search(
+            r"(?:Subdivision|Addition)\s+(?:of\s+)?([A-Za-z][A-Za-z .]+?)(?:\s*,|\s*$)", raw, re.IGNORECASE
+        )
         result.lot = lm.group(1) if lm else None
         result.block = bm.group(1) if bm else None
         result.subdivision = sm_sub.group(1).strip() if sm_sub else None
@@ -251,7 +269,7 @@ def parse_legal_description(desc: str) -> ParsedLegalDescription:
             rng_dir = chunk_rng.group(2).upper() if chunk_rng else primary_rng_dir
 
             # Aliquot parts for this section — text before the Sec token
-            aliquot_text = raw[:sm.start()] if i == 0 else raw[sec_matches[i - 1].end():sm.start()]
+            aliquot_text = raw[: sm.start()] if i == 0 else raw[sec_matches[i - 1].end() : sm.start()]
             aliquots = _parse_aliquot_parts(aliquot_text)
             if not aliquots:
                 aliquots = _parse_aliquot_parts(chunk)
@@ -302,7 +320,7 @@ for _row in range(6):
         else:
             # Left-to-right: col 0 = lowest section number in this row
             _sec = _row * 6 + _col + 1
-        _SECTION_GRID[_sec] = (_col, _row)   # (grid_x, grid_y)
+        _SECTION_GRID[_sec] = (_col, _row)  # (grid_x, grid_y)
 
 
 def section_grid_position(section: int) -> Optional[tuple[int, int]]:
@@ -337,6 +355,7 @@ def aliquot_coverage_pct(parts: list[AliquotPart]) -> float:
 # ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
+
 
 def parsed_to_dict(p: ParsedLegalDescription) -> dict:
     """Convert a ParsedLegalDescription to a JSON-safe dict for API responses."""

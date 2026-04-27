@@ -65,10 +65,7 @@ def check_rate_limit(
 
     if row is None:
         db.execute(
-            text(
-                "INSERT INTO rate_limit_buckets (key, count, window_start) "
-                "VALUES (:k, 1, :w)"
-            ),
+            text("INSERT INTO rate_limit_buckets (key, count, window_start) " "VALUES (:k, 1, :w)"),
             {"k": key, "w": now},
         )
         db.commit()
@@ -80,10 +77,7 @@ def check_rate_limit(
     if elapsed >= window_seconds:
         # Window expired — reset to a fresh bucket starting at "now".
         db.execute(
-            text(
-                "UPDATE rate_limit_buckets "
-                "SET count = 1, window_start = :w WHERE key = :k"
-            ),
+            text("UPDATE rate_limit_buckets " "SET count = 1, window_start = :w WHERE key = :k"),
             {"k": key, "w": now},
         )
         db.commit()
@@ -94,9 +88,7 @@ def check_rate_limit(
         return False, retry_after
 
     db.execute(
-        text(
-            "UPDATE rate_limit_buckets SET count = count + 1 WHERE key = :k"
-        ),
+        text("UPDATE rate_limit_buckets SET count = count + 1 WHERE key = :k"),
         {"k": key},
     )
     db.commit()

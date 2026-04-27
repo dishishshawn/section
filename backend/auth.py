@@ -19,14 +19,14 @@ IS_PRODUCTION = os.getenv("ENV", "").lower() == "production"
 if IS_PRODUCTION and (not SECRET_KEY or SECRET_KEY == _DEV_SECRET):
     raise RuntimeError(
         "SECRET_KEY must be set to a strong random value when ENV=production. "
-        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+        'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
     )
 if not SECRET_KEY:
     SECRET_KEY = _DEV_SECRET
 
 _session_serializer = URLSafeTimedSerializer(SECRET_KEY, salt="session")
 
-CODE_TTL_SECONDS = 10 * 60          # 10 min
+CODE_TTL_SECONDS = 10 * 60  # 10 min
 CODE_MAX_ATTEMPTS = 5
 SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
 
@@ -168,7 +168,7 @@ def get_current_user(
     if not session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
     user_id, session_version = _decode_session(session)
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     current_version = getattr(user, "session_version", 0) or 0
@@ -206,16 +206,19 @@ def send_verification_code(email: str, code: str) -> None:
         return
 
     import resend
+
     resend.api_key = api_key
-    resend.Emails.send({
-        "from": f"{from_name} <{from_address}>",
-        "reply_to": reply_to,
-        "to": email,
-        "subject": f"Your Section sign-in code: {code}",
-        "html": html_body,
-        "text": text_body,
-        "headers": {
-            "List-Unsubscribe": f"<mailto:{reply_to}?subject=unsubscribe>",
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
-    })
+    resend.Emails.send(
+        {
+            "from": f"{from_name} <{from_address}>",
+            "reply_to": reply_to,
+            "to": email,
+            "subject": f"Your Section sign-in code: {code}",
+            "html": html_body,
+            "text": text_body,
+            "headers": {
+                "List-Unsubscribe": f"<mailto:{reply_to}?subject=unsubscribe>",
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            },
+        }
+    )

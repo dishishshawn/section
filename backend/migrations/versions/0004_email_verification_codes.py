@@ -7,11 +7,11 @@ Revision ID: 0004_email_verification_codes
 Revises: 0003_rate_limit_buckets
 Create Date: 2026-04-27
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-
 
 revision: str = "0004_email_verification_codes"
 down_revision: Union[str, None] = "0003_rate_limit_buckets"

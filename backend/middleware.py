@@ -5,6 +5,7 @@ mints a UUID4. It stores the id in a contextvar so every log record emitted
 during the request carries it, and echoes the id back in the response header
 so callers / upstream proxies can correlate.
 """
+
 from __future__ import annotations
 
 import uuid

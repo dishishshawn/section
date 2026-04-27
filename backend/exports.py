@@ -2,8 +2,13 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph,
-    Spacer, PageBreak, HRFlowable,
+    SimpleDocTemplate,
+    Table,
+    TableStyle,
+    Paragraph,
+    Spacer,
+    PageBreak,
+    HRFlowable,
 )
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -11,92 +16,108 @@ from io import BytesIO
 from datetime import datetime
 
 # ── shared palette ──────────────────────────────────────────────────────────
-INK       = colors.HexColor('#1d2635')
-INK2      = colors.HexColor('#4a5568')
-INK3      = colors.HexColor('#8a94a6')
-RULE      = colors.HexColor('#c8cdd6')
-ACCENT    = colors.HexColor('#2b5797')
-RUST      = colors.HexColor('#b94a2c')
-PAPER     = colors.white
-ROW_ALT   = colors.HexColor('#f7f8fa')
+INK = colors.HexColor("#1d2635")
+INK2 = colors.HexColor("#4a5568")
+INK3 = colors.HexColor("#8a94a6")
+RULE = colors.HexColor("#c8cdd6")
+ACCENT = colors.HexColor("#2b5797")
+RUST = colors.HexColor("#b94a2c")
+PAPER = colors.white
+ROW_ALT = colors.HexColor("#f7f8fa")
 
 
 def _base_styles():
     s = getSampleStyleSheet()
-    eyebrow = ParagraphStyle('Eyebrow', parent=s['Normal'],
-        fontSize=7, textColor=INK3, spaceAfter=2,
-        fontName='Helvetica', letterSpacing=1.2)
-    title = ParagraphStyle('SectionTitle', parent=s['Normal'],
-        fontSize=22, textColor=INK, spaceAfter=4,
-        fontName='Helvetica-Bold', leading=26)
-    subtitle = ParagraphStyle('Subtitle', parent=s['Normal'],
-        fontSize=10, textColor=INK2, spaceAfter=12,
-        fontName='Helvetica-Oblique')
-    h2 = ParagraphStyle('H2', parent=s['Normal'],
-        fontSize=11, textColor=INK, spaceAfter=6, spaceBefore=14,
-        fontName='Helvetica-Bold')
-    body = ParagraphStyle('Body', parent=s['Normal'],
-        fontSize=9, textColor=INK2, leading=14, spaceAfter=4,
-        fontName='Helvetica')
-    small = ParagraphStyle('Small', parent=s['Normal'],
-        fontSize=8, textColor=INK3, leading=11,
-        fontName='Helvetica-Oblique')
-    mono = ParagraphStyle('Mono', parent=s['Normal'],
-        fontSize=8, textColor=INK2, fontName='Courier')
-    cell = ParagraphStyle('Cell', parent=s['Normal'],
-        fontSize=9, textColor=INK2, leading=12,
-        fontName='Helvetica', wordWrap='CJK')
-    return {'eyebrow': eyebrow, 'title': title, 'subtitle': subtitle,
-            'h2': h2, 'body': body, 'small': small, 'mono': mono, 'cell': cell}
+    eyebrow = ParagraphStyle(
+        "Eyebrow", parent=s["Normal"], fontSize=7, textColor=INK3, spaceAfter=2, fontName="Helvetica", letterSpacing=1.2
+    )
+    title = ParagraphStyle(
+        "SectionTitle",
+        parent=s["Normal"],
+        fontSize=22,
+        textColor=INK,
+        spaceAfter=4,
+        fontName="Helvetica-Bold",
+        leading=26,
+    )
+    subtitle = ParagraphStyle(
+        "Subtitle", parent=s["Normal"], fontSize=10, textColor=INK2, spaceAfter=12, fontName="Helvetica-Oblique"
+    )
+    h2 = ParagraphStyle(
+        "H2", parent=s["Normal"], fontSize=11, textColor=INK, spaceAfter=6, spaceBefore=14, fontName="Helvetica-Bold"
+    )
+    body = ParagraphStyle(
+        "Body", parent=s["Normal"], fontSize=9, textColor=INK2, leading=14, spaceAfter=4, fontName="Helvetica"
+    )
+    small = ParagraphStyle(
+        "Small", parent=s["Normal"], fontSize=8, textColor=INK3, leading=11, fontName="Helvetica-Oblique"
+    )
+    mono = ParagraphStyle("Mono", parent=s["Normal"], fontSize=8, textColor=INK2, fontName="Courier")
+    cell = ParagraphStyle(
+        "Cell", parent=s["Normal"], fontSize=9, textColor=INK2, leading=12, fontName="Helvetica", wordWrap="CJK"
+    )
+    return {
+        "eyebrow": eyebrow,
+        "title": title,
+        "subtitle": subtitle,
+        "h2": h2,
+        "body": body,
+        "small": small,
+        "mono": mono,
+        "cell": cell,
+    }
 
 
 def _wrap_cell(text, style):
     """Wrap raw text in a Paragraph so the table cell word-wraps."""
     if text is None:
-        return ''
+        return ""
     s = str(text)
     # Escape XML special chars so they render literally in the Paragraph.
-    s = s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return Paragraph(s, style)
 
 
-def _header_block(story, st, eyebrow_text, title_text, subtitle_text,
-                  project_name, jurisdiction, date_str):
-    story.append(Paragraph(eyebrow_text, st['eyebrow']))
-    story.append(Paragraph(title_text, st['title']))
-    story.append(Paragraph(subtitle_text, st['subtitle']))
-    story.append(HRFlowable(width='100%', thickness=2, color=INK, spaceAfter=2))
-    story.append(HRFlowable(width='100%', thickness=0.5, color=RULE, spaceAfter=10))
+def _header_block(story, st, eyebrow_text, title_text, subtitle_text, project_name, jurisdiction, date_str):
+    story.append(Paragraph(eyebrow_text, st["eyebrow"]))
+    story.append(Paragraph(title_text, st["title"]))
+    story.append(Paragraph(subtitle_text, st["subtitle"]))
+    story.append(HRFlowable(width="100%", thickness=2, color=INK, spaceAfter=2))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=RULE, spaceAfter=10))
     meta = Table(
-        [[Paragraph(f'<b>Project:</b> {project_name}', st['body']),
-          Paragraph(f'<b>Jurisdiction:</b> {jurisdiction}', st['body']),
-          Paragraph(f'<b>Date:</b> {date_str}', st['body'])]],
-        colWidths=[2.5*inch, 2.5*inch, 2*inch],
+        [
+            [
+                Paragraph(f"<b>Project:</b> {project_name}", st["body"]),
+                Paragraph(f"<b>Jurisdiction:</b> {jurisdiction}", st["body"]),
+                Paragraph(f"<b>Date:</b> {date_str}", st["body"]),
+            ]
+        ],
+        colWidths=[2.5 * inch, 2.5 * inch, 2 * inch],
     )
-    meta.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    meta.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     story.append(meta)
-    story.append(Spacer(1, 0.25*inch))
+    story.append(Spacer(1, 0.25 * inch))
 
 
 def _col_table(data, col_widths, header=True):
     t = Table(data, colWidths=col_widths, repeatRows=1 if header else 0)
     style = [
-        ('FONTNAME',  (0,0), (-1,0 if header else -1), 'Helvetica-Bold'),
-        ('FONTSIZE',  (0,0), (-1,-1), 9),
-        ('TEXTCOLOR', (0,0), (-1,-1), INK2),
-        ('ALIGN',     (0,0), (-1,-1), 'LEFT'),
-        ('VALIGN',    (0,0), (-1,-1), 'TOP'),
-        ('ROWBACKGROUNDS', (0, 1 if header else 0), (-1,-1), [PAPER, ROW_ALT]),
-        ('LINEBELOW', (0,0), (-1,0), 0.5, RULE),
-        ('LINEBELOW', (0,1), (-1,-1), 0.25, RULE),
-        ('TOPPADDING', (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-        ('LEFTPADDING', (0,0), (-1,-1), 6),
+        ("FONTNAME", (0, 0), (-1, 0 if header else -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TEXTCOLOR", (0, 0), (-1, -1), INK2),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1 if header else 0), (-1, -1), [PAPER, ROW_ALT]),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, RULE),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.25, RULE),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
     ]
     if header:
         style += [
-            ('BACKGROUND', (0,0), (-1,0), INK),
-            ('TEXTCOLOR',  (0,0), (-1,0), PAPER),
+            ("BACKGROUND", (0, 0), (-1, 0), INK),
+            ("TEXTCOLOR", (0, 0), (-1, 0), PAPER),
         ]
     t.setStyle(TableStyle(style))
     return t
@@ -104,47 +125,49 @@ def _col_table(data, col_widths, header=True):
 
 def _footer(canvas, doc):
     canvas.saveState()
-    canvas.setFont('Helvetica', 7)
+    canvas.setFont("Helvetica", 7)
     canvas.setFillColor(INK3)
-    canvas.drawString(doc.leftMargin, 0.4*inch,
-        'Generated by Section · Land Graph Operating Layer')
-    canvas.drawRightString(letter[0] - doc.rightMargin, 0.4*inch,
-        f'Page {doc.page}')
+    canvas.drawString(doc.leftMargin, 0.4 * inch, "Generated by Section · Land Graph Operating Layer")
+    canvas.drawRightString(letter[0] - doc.rightMargin, 0.4 * inch, f"Page {doc.page}")
     canvas.restoreState()
 
 
 def _doc(buffer):
     return SimpleDocTemplate(
-        buffer, pagesize=letter,
-        topMargin=0.75*inch, bottomMargin=0.65*inch,
-        leftMargin=0.9*inch, rightMargin=0.9*inch,
+        buffer,
+        pagesize=letter,
+        topMargin=0.75 * inch,
+        bottomMargin=0.65 * inch,
+        leftMargin=0.9 * inch,
+        rightMargin=0.9 * inch,
     )
 
 
 # ── citation + reviewed tracking ────────────────────────────────────────────
 
+
 class _CiteTracker:
     """Collects source references; returns bracketed cite numbers for cells."""
 
     def __init__(self):
-        self._cites = []          # list of (doc_id, filename, quote)
-        self._doc_index = {}      # doc_id → cite number (1-based)
+        self._cites = []  # list of (doc_id, filename, quote)
+        self._doc_index = {}  # doc_id → cite number (1-based)
 
     def add(self, source: dict | None) -> str:
         if not source:
-            return ''
-        doc_id = source.get('document_id')
-        filename = source.get('filename') or '—'
-        quote = source.get('quote') or ''
+            return ""
+        doc_id = source.get("document_id")
+        filename = source.get("filename") or "—"
+        quote = source.get("quote") or ""
         if doc_id is not None:
             if doc_id not in self._doc_index:
                 self._doc_index[doc_id] = len(self._cites) + 1
                 self._cites.append((doc_id, filename, quote))
-            return f'[{self._doc_index[doc_id]}]'
+            return f"[{self._doc_index[doc_id]}]"
         # Anonymous source — always unique
         n = len(self._cites) + 1
         self._cites.append((None, filename, quote))
-        return f'[{n}]'
+        return f"[{n}]"
 
     def has_cites(self) -> bool:
         return bool(self._cites)
@@ -155,28 +178,31 @@ class _CiteTracker:
 
 def _r(reviewed: dict, field: str) -> str:
     """Returns ' †' if the field was human-reviewed, else ''."""
-    return ' †' if (reviewed and reviewed.get(field)) else ''
+    return " †" if (reviewed and reviewed.get(field)) else ""
 
 
 def _build_appendix(story, st, tracker: _CiteTracker) -> None:
     if not tracker.has_cites():
         return
     story.append(PageBreak())
-    story.append(Paragraph('SOURCES — APPENDIX', st['eyebrow']))
-    story.append(Paragraph('Source Documents', st['h2']))
-    story.append(HRFlowable(width='100%', thickness=0.5, color=RULE, spaceAfter=6))
-    story.append(Paragraph(
-        '† denotes a fact that has been reviewed and confirmed by a user. '
-        'Bracketed numbers [n] key each fact to this appendix.',
-        st['small']))
-    story.append(Spacer(1, 0.12*inch))
-    data = [['Ref', 'Document', 'Verbatim excerpt']]
+    story.append(Paragraph("SOURCES — APPENDIX", st["eyebrow"]))
+    story.append(Paragraph("Source Documents", st["h2"]))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=RULE, spaceAfter=6))
+    story.append(
+        Paragraph(
+            "† denotes a fact that has been reviewed and confirmed by a user. "
+            "Bracketed numbers [n] key each fact to this appendix.",
+            st["small"],
+        )
+    )
+    story.append(Spacer(1, 0.12 * inch))
+    data = [["Ref", "Document", "Verbatim excerpt"]]
     for n, (_, filename, quote) in tracker.items():
-        excerpt = (quote or 'No excerpt on record')
+        excerpt = quote or "No excerpt on record"
         if len(excerpt) > 160:
-            excerpt = excerpt[:157] + '…'
-        data.append([f'[{n}]', filename, excerpt])
-    story.append(_col_table(data, [0.4*inch, 1.8*inch, 4.2*inch]))
+            excerpt = excerpt[:157] + "…"
+        data.append([f"[{n}]", filename, excerpt])
+    story.append(_col_table(data, [0.4 * inch, 1.8 * inch, 4.2 * inch]))
 
 
 # ── 1. Ownership report ──────────────────────────────────────────────────────
@@ -187,39 +213,46 @@ class OwnershipReportGenerator:
         doc = _doc(buffer)
         st = _base_styles()
         story = []
-        date_str = datetime.now().strftime('%B %d, %Y')
+        date_str = datetime.now().strftime("%B %d, %Y")
         tracker = _CiteTracker()
 
-        _header_block(story, st,
-            'SECTION II — OWNERSHIP',
-            'Ownership Position',
-            'Fractional mineral interests extracted from recorded instruments.',
-            project_name, jurisdiction, date_str)
+        _header_block(
+            story,
+            st,
+            "SECTION II — OWNERSHIP",
+            "Ownership Position",
+            "Fractional mineral interests extracted from recorded instruments.",
+            project_name,
+            jurisdiction,
+            date_str,
+        )
 
-        owners = ownership_data.get('owners', [])
+        owners = ownership_data.get("owners", [])
         if owners:
-            story.append(Paragraph('Fractional Ownership', st['h2']))
-            data = [['Party', 'Fraction', '%', 'Mineral Estate', 'Burdens']]
+            story.append(Paragraph("Fractional Ownership", st["h2"]))
+            data = [["Party", "Fraction", "%", "Mineral Estate", "Burdens"]]
             for o in owners:
-                reviewed = o.get('reviewed') or {}
-                cite = tracker.add(o.get('source'))
-                data.append([
-                    o.get('name', '') + _r(reviewed, 'name') + cite,
-                    o.get('fraction', ''),
-                    f"{o.get('percentage', 0)}%",
-                    o.get('mineral_estate', '') + _r(reviewed, 'mineral_estate'),
-                    str(o.get('burdens') or 'None'),
-                ])
-            story.append(_col_table(data, [2.1*inch, 0.8*inch, 0.6*inch, 1.4*inch, 1.5*inch]))
-            story.append(Spacer(1, 0.2*inch))
+                reviewed = o.get("reviewed") or {}
+                cite = tracker.add(o.get("source"))
+                data.append(
+                    [
+                        o.get("name", "") + _r(reviewed, "name") + cite,
+                        o.get("fraction", ""),
+                        f"{o.get('percentage', 0)}%",
+                        o.get("mineral_estate", "") + _r(reviewed, "mineral_estate"),
+                        str(o.get("burdens") or "None"),
+                    ]
+                )
+            story.append(_col_table(data, [2.1 * inch, 0.8 * inch, 0.6 * inch, 1.4 * inch, 1.5 * inch]))
+            story.append(Spacer(1, 0.2 * inch))
 
-        story.append(Paragraph('Acreage Summary', st['h2']))
+        story.append(Paragraph("Acreage Summary", st["h2"]))
         acreage = [
-            ['Total acres', str(ownership_data.get('total_acres', 0))],
-            ['Leased acres', str(ownership_data.get('leased_acres', 0))],
-            ['Open acres',   str(ownership_data.get('open_acres', 0))],
+            ["Total acres", str(ownership_data.get("total_acres", 0))],
+            ["Leased acres", str(ownership_data.get("leased_acres", 0))],
+            ["Open acres", str(ownership_data.get("open_acres", 0))],
         ]
-        story.append(_col_table(acreage, [3*inch, 2*inch], header=False))
+        story.append(_col_table(acreage, [3 * inch, 2 * inch], header=False))
 
         _build_appendix(story, st, tracker)
         doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
@@ -235,73 +268,82 @@ class RunsheetGenerator:
         doc = _doc(buffer)
         st = _base_styles()
         story = []
-        date_str = datetime.now().strftime('%B %d, %Y')
+        date_str = datetime.now().strftime("%B %d, %Y")
         tracker = _CiteTracker()
 
-        _header_block(story, st,
-            'SECTION II — CHAIN OF TITLE',
-            'Runsheet',
-            'Every recorded instrument touching this tract, in order of date.',
-            project_name, jurisdiction, date_str)
+        _header_block(
+            story,
+            st,
+            "SECTION II — CHAIN OF TITLE",
+            "Runsheet",
+            "Every recorded instrument touching this tract, in order of date.",
+            project_name,
+            jurisdiction,
+            date_str,
+        )
 
-        chain = runsheet_data.get('chain', [])
+        chain = runsheet_data.get("chain", [])
         if chain:
-            story.append(Paragraph('Chain of Title', st['h2']))
-            data = [['#', 'Instrument', 'Date', 'Grantor', 'Grantee', 'Status']]
+            story.append(Paragraph("Chain of Title", st["h2"]))
+            data = [["#", "Instrument", "Date", "Grantor", "Grantee", "Status"]]
             flagged_rows = []
             missing_rows = []
             for i, item in enumerate(chain, 1):
-                reviewed = item.get('reviewed') or {}
-                cite = tracker.add(item.get('source'))
-                status = item.get('status') or ''
+                reviewed = item.get("reviewed") or {}
+                cite = tracker.add(item.get("source"))
+                status = item.get("status") or ""
                 status_text = {
-                    'complete': 'Of record',
-                    'flagged':  'Review',
-                    'missing':  'Incomplete',
+                    "complete": "Of record",
+                    "flagged": "Review",
+                    "missing": "Incomplete",
                 }.get(status) or status
-                data.append([
-                    str(i).zfill(2),
-                    _wrap_cell(item.get('instrument_type'), st['cell']),
-                    str(item.get('date') or ''),
-                    _wrap_cell(str(item.get('grantor') or '') + _r(reviewed, 'grantor') + cite, st['cell']),
-                    _wrap_cell(str(item.get('grantee') or '') + _r(reviewed, 'grantee'), st['cell']),
-                    _wrap_cell(status_text, st['cell']),
-                ])
-                if status == 'flagged':
+                data.append(
+                    [
+                        str(i).zfill(2),
+                        _wrap_cell(item.get("instrument_type"), st["cell"]),
+                        str(item.get("date") or ""),
+                        _wrap_cell(str(item.get("grantor") or "") + _r(reviewed, "grantor") + cite, st["cell"]),
+                        _wrap_cell(str(item.get("grantee") or "") + _r(reviewed, "grantee"), st["cell"]),
+                        _wrap_cell(status_text, st["cell"]),
+                    ]
+                )
+                if status == "flagged":
                     flagged_rows.append(i)
-                elif status == 'missing':
+                elif status == "missing":
                     missing_rows.append(i)
 
-            t = _col_table(data, [0.35*inch, 1.1*inch, 0.8*inch, 1.5*inch, 1.5*inch, 0.85*inch])
+            t = _col_table(data, [0.35 * inch, 1.1 * inch, 0.8 * inch, 1.5 * inch, 1.5 * inch, 0.85 * inch])
             extra = []
             for row in flagged_rows:
-                extra.append(('TEXTCOLOR', (5, row), (5, row), RUST))
+                extra.append(("TEXTCOLOR", (5, row), (5, row), RUST))
             for row in missing_rows:
-                extra.append(('TEXTCOLOR', (5, row), (5, row), RUST))
-                extra.append(('FONTNAME',  (5, row), (5, row), 'Helvetica-Oblique'))
+                extra.append(("TEXTCOLOR", (5, row), (5, row), RUST))
+                extra.append(("FONTNAME", (5, row), (5, row), "Helvetica-Oblique"))
             if extra:
                 t.setStyle(TableStyle(extra))
             story.append(t)
-            story.append(Spacer(1, 0.2*inch))
+            story.append(Spacer(1, 0.2 * inch))
 
-        gaps = runsheet_data.get('gaps', [])
+        gaps = runsheet_data.get("gaps", [])
         if gaps:
-            story.append(HRFlowable(width='100%', thickness=1.5, color=RUST, spaceAfter=4))
-            story.append(Paragraph('SECTION III — CURATIVE', st['eyebrow']))
-            story.append(Paragraph('Curative Items', st['h2']))
-            story.append(Paragraph(
-                'The following gaps or defects must be resolved before title can be certified.',
-                st['body']))
-            story.append(Spacer(1, 0.1*inch))
-            data = [['#', 'Description', 'From', 'To']]
+            story.append(HRFlowable(width="100%", thickness=1.5, color=RUST, spaceAfter=4))
+            story.append(Paragraph("SECTION III — CURATIVE", st["eyebrow"]))
+            story.append(Paragraph("Curative Items", st["h2"]))
+            story.append(
+                Paragraph("The following gaps or defects must be resolved before title can be certified.", st["body"])
+            )
+            story.append(Spacer(1, 0.1 * inch))
+            data = [["#", "Description", "From", "To"]]
             for i, gap in enumerate(gaps, 1):
-                data.append([
-                    str(i).zfill(2),
-                    gap.get('missing_document', ''),
-                    gap.get('from', ''),
-                    gap.get('to', ''),
-                ])
-            story.append(_col_table(data, [0.35*inch, 2.8*inch, 1.2*inch, 1.2*inch]))
+                data.append(
+                    [
+                        str(i).zfill(2),
+                        gap.get("missing_document", ""),
+                        gap.get("from", ""),
+                        gap.get("to", ""),
+                    ]
+                )
+            story.append(_col_table(data, [0.35 * inch, 2.8 * inch, 1.2 * inch, 1.2 * inch]))
 
         _build_appendix(story, st, tracker)
         doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
@@ -312,108 +354,135 @@ class RunsheetGenerator:
 # ── 3. Title Opinion PDF ─────────────────────────────────────────────────────
 class TitleOpinionGenerator:
     @staticmethod
-    def generate_pdf(project_name: str, jurisdiction: str,
-                     runsheet_data: dict, ownership_data: dict) -> BytesIO:
+    def generate_pdf(project_name: str, jurisdiction: str, runsheet_data: dict, ownership_data: dict) -> BytesIO:
         buffer = BytesIO()
         doc = _doc(buffer)
         st = _base_styles()
         story = []
-        date_str = datetime.now().strftime('%B %d, %Y')
+        date_str = datetime.now().strftime("%B %d, %Y")
         tracker = _CiteTracker()
 
-        _header_block(story, st,
-            'TITLE OPINION',
-            'Title Opinion',
-            'Preliminary examination of title based on instruments of record.',
-            project_name, jurisdiction, date_str)
+        _header_block(
+            story,
+            st,
+            "TITLE OPINION",
+            "Title Opinion",
+            "Preliminary examination of title based on instruments of record.",
+            project_name,
+            jurisdiction,
+            date_str,
+        )
 
-        chain  = runsheet_data.get('chain', [])
-        gaps   = runsheet_data.get('gaps', [])
-        owners = ownership_data.get('owners', [])
-        total_acres = ownership_data.get('total_acres', 0)
+        chain = runsheet_data.get("chain", [])
+        gaps = runsheet_data.get("gaps", [])
+        owners = ownership_data.get("owners", [])
+        total_acres = ownership_data.get("total_acres", 0)
 
-        story.append(Paragraph('I. Scope of Examination', st['h2']))
-        story.append(Paragraph(
-            f'This opinion covers the title to approximately {total_acres} gross acres '
-            f'in {jurisdiction}, as described in the instruments of record examined. '
-            f'A total of {len(chain)} instrument(s) were reviewed.', st['body']))
+        story.append(Paragraph("I. Scope of Examination", st["h2"]))
+        story.append(
+            Paragraph(
+                f"This opinion covers the title to approximately {total_acres} gross acres "
+                f"in {jurisdiction}, as described in the instruments of record examined. "
+                f"A total of {len(chain)} instrument(s) were reviewed.",
+                st["body"],
+            )
+        )
 
-        story.append(Paragraph('II. State of Title', st['h2']))
+        story.append(Paragraph("II. State of Title", st["h2"]))
         if not gaps:
-            story.append(Paragraph(
-                'Title appears marketable based on instruments examined. No gaps or defects '
-                'were detected in the chain of title.', st['body']))
+            story.append(
+                Paragraph(
+                    "Title appears marketable based on instruments examined. No gaps or defects "
+                    "were detected in the chain of title.",
+                    st["body"],
+                )
+            )
         else:
-            story.append(Paragraph(
-                f'Title examination revealed {len(gaps)} curative matter(s) requiring resolution '
-                'before title can be certified as marketable. See Section V.', st['body']))
+            story.append(
+                Paragraph(
+                    f"Title examination revealed {len(gaps)} curative matter(s) requiring resolution "
+                    "before title can be certified as marketable. See Section V.",
+                    st["body"],
+                )
+            )
 
-        story.append(Paragraph('III. Ownership Summary', st['h2']))
+        story.append(Paragraph("III. Ownership Summary", st["h2"]))
         if owners:
-            data = [['Party', 'Fraction', '%', 'Mineral Estate']]
+            data = [["Party", "Fraction", "%", "Mineral Estate"]]
             for o in owners:
-                reviewed = o.get('reviewed') or {}
-                cite = tracker.add(o.get('source'))
-                data.append([
-                    o.get('name', '') + _r(reviewed, 'name') + cite,
-                    o.get('fraction', ''),
-                    f"{o.get('percentage', 0)}%",
-                    o.get('mineral_estate', '') + _r(reviewed, 'mineral_estate'),
-                ])
-            story.append(_col_table(data, [2.3*inch, 0.9*inch, 0.7*inch, 2.1*inch]))
-            story.append(Spacer(1, 0.1*inch))
+                reviewed = o.get("reviewed") or {}
+                cite = tracker.add(o.get("source"))
+                data.append(
+                    [
+                        o.get("name", "") + _r(reviewed, "name") + cite,
+                        o.get("fraction", ""),
+                        f"{o.get('percentage', 0)}%",
+                        o.get("mineral_estate", "") + _r(reviewed, "mineral_estate"),
+                    ]
+                )
+            story.append(_col_table(data, [2.3 * inch, 0.9 * inch, 0.7 * inch, 2.1 * inch]))
+            story.append(Spacer(1, 0.1 * inch))
         else:
-            story.append(Paragraph('No ownership interests of record.', st['body']))
+            story.append(Paragraph("No ownership interests of record.", st["body"]))
 
-        story.append(Paragraph('IV. Chain of Title', st['h2']))
+        story.append(Paragraph("IV. Chain of Title", st["h2"]))
         if chain:
-            data = [['#', 'Instrument', 'Date', 'Grantor → Grantee', 'Status']]
+            data = [["#", "Instrument", "Date", "Grantor → Grantee", "Status"]]
             for i, item in enumerate(chain, 1):
-                reviewed = item.get('reviewed') or {}
-                cite = tracker.add(item.get('source'))
-                raw_status = str(item.get('status') or '')
+                reviewed = item.get("reviewed") or {}
+                cite = tracker.add(item.get("source"))
+                raw_status = str(item.get("status") or "")
                 status = {
-                    'complete': 'Of record',
-                    'flagged':  'Review',
-                    'missing':  'Incomplete',
+                    "complete": "Of record",
+                    "flagged": "Review",
+                    "missing": "Incomplete",
                 }.get(raw_status) or raw_status
-                grantor = str(item.get('grantor') or '') + _r(reviewed, 'grantor') + cite
-                grantee = str(item.get('grantee') or '') + _r(reviewed, 'grantee')
-                data.append([
-                    str(i).zfill(2),
-                    _wrap_cell(item.get('instrument_type'), st['cell']),
-                    str(item.get('date') or ''),
-                    _wrap_cell(f'{grantor} → {grantee}', st['cell']),
-                    _wrap_cell(status, st['cell']),
-                ])
-            story.append(_col_table(data, [0.35*inch, 1.1*inch, 0.8*inch, 2.8*inch, 0.85*inch]))
-            story.append(Spacer(1, 0.15*inch))
+                grantor = str(item.get("grantor") or "") + _r(reviewed, "grantor") + cite
+                grantee = str(item.get("grantee") or "") + _r(reviewed, "grantee")
+                data.append(
+                    [
+                        str(i).zfill(2),
+                        _wrap_cell(item.get("instrument_type"), st["cell"]),
+                        str(item.get("date") or ""),
+                        _wrap_cell(f"{grantor} → {grantee}", st["cell"]),
+                        _wrap_cell(status, st["cell"]),
+                    ]
+                )
+            story.append(_col_table(data, [0.35 * inch, 1.1 * inch, 0.8 * inch, 2.8 * inch, 0.85 * inch]))
+            story.append(Spacer(1, 0.15 * inch))
 
         if gaps:
-            story.append(Paragraph('V. Curative Requirements', st['h2']))
-            story.append(Paragraph(
-                'The following matters must be resolved prior to certification of title:', st['body']))
-            story.append(Spacer(1, 0.05*inch))
-            data = [['#', 'Curative Matter', 'From', 'To']]
+            story.append(Paragraph("V. Curative Requirements", st["h2"]))
+            story.append(
+                Paragraph("The following matters must be resolved prior to certification of title:", st["body"])
+            )
+            story.append(Spacer(1, 0.05 * inch))
+            data = [["#", "Curative Matter", "From", "To"]]
             for i, gap in enumerate(gaps, 1):
-                data.append([
-                    str(i).zfill(2),
-                    gap.get('missing_document', ''),
-                    gap.get('from', ''),
-                    gap.get('to', ''),
-                ])
-            story.append(_col_table(data, [0.35*inch, 2.8*inch, 1.2*inch, 1.2*inch]))
-            story.append(Spacer(1, 0.2*inch))
+                data.append(
+                    [
+                        str(i).zfill(2),
+                        gap.get("missing_document", ""),
+                        gap.get("from", ""),
+                        gap.get("to", ""),
+                    ]
+                )
+            story.append(_col_table(data, [0.35 * inch, 2.8 * inch, 1.2 * inch, 1.2 * inch]))
+            story.append(Spacer(1, 0.2 * inch))
 
-        story.append(Paragraph('VI. Certification', st['h2']))
-        story.append(Paragraph(
-            'This opinion is based solely upon the instruments examined and does not constitute '
-            'a guarantee of title. It is subject to matters not of record, including but not '
-            'limited to unrecorded instruments, encroachments, and other matters a survey '
-            'or physical inspection would disclose.', st['body']))
-        story.append(Spacer(1, 0.4*inch))
-        story.append(Paragraph('Prepared by: ________________________________', st['body']))
-        story.append(Paragraph(f'Date: {date_str}', st['body']))
+        story.append(Paragraph("VI. Certification", st["h2"]))
+        story.append(
+            Paragraph(
+                "This opinion is based solely upon the instruments examined and does not constitute "
+                "a guarantee of title. It is subject to matters not of record, including but not "
+                "limited to unrecorded instruments, encroachments, and other matters a survey "
+                "or physical inspection would disclose.",
+                st["body"],
+            )
+        )
+        story.append(Spacer(1, 0.4 * inch))
+        story.append(Paragraph("Prepared by: ________________________________", st["body"]))
+        story.append(Paragraph(f"Date: {date_str}", st["body"]))
 
         _build_appendix(story, st, tracker)
         doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
@@ -429,43 +498,52 @@ class StipulationsGenerator:
         doc = _doc(buffer)
         st = _base_styles()
         story = []
-        date_str = datetime.now().strftime('%B %d, %Y')
+        date_str = datetime.now().strftime("%B %d, %Y")
         tracker = _CiteTracker()
 
-        _header_block(story, st,
-            'SECTION IV — OBLIGATIONS',
-            'Stipulations Memo',
-            'Term expirations, Pugh triggers, rentals, and drilling deadlines.',
-            project_name, jurisdiction, date_str)
+        _header_block(
+            story,
+            st,
+            "SECTION IV — OBLIGATIONS",
+            "Stipulations Memo",
+            "Term expirations, Pugh triggers, rentals, and drilling deadlines.",
+            project_name,
+            jurisdiction,
+            date_str,
+        )
 
-        obligations = obligations_data.get('obligations', [])
+        obligations = obligations_data.get("obligations", [])
 
         buckets = [
-            ('Immediate Attention', 'high',   'Within 30 days'),
-            ('On the Calendar',     'medium',  '31–120 days'),
-            ('In the Distance',     'low',     'More than 120 days'),
+            ("Immediate Attention", "high", "Within 30 days"),
+            ("On the Calendar", "medium", "31–120 days"),
+            ("In the Distance", "low", "More than 120 days"),
         ]
 
         for label, priority, note in buckets:
-            items = [o for o in obligations if o.get('priority') == priority]
+            items = [o for o in obligations if o.get("priority") == priority]
             if not items:
                 continue
-            story.append(Paragraph(f'{label} — {note}', st['h2']))
-            data = [['Type', 'Description', 'Due Date', 'Days']]
+            story.append(Paragraph(f"{label} — {note}", st["h2"]))
+            data = [["Type", "Description", "Due Date", "Days"]]
             for o in items:
-                reviewed = o.get('reviewed') or {}
-                cite = tracker.add(o.get('source'))
-                data.append([
-                    _wrap_cell(o.get('type', '').replace('_', ' ').title() + _r(reviewed, 'type') + cite, st['cell']),
-                    _wrap_cell(o.get('description', '') + _r(reviewed, 'description'), st['cell']),
-                    (o.get('due_date') or '')[:10],
-                    str(o.get('days_until', '')),
-                ])
-            story.append(_col_table(data, [1.2*inch, 3.2*inch, 0.9*inch, 0.6*inch]))
-            story.append(Spacer(1, 0.15*inch))
+                reviewed = o.get("reviewed") or {}
+                cite = tracker.add(o.get("source"))
+                data.append(
+                    [
+                        _wrap_cell(
+                            o.get("type", "").replace("_", " ").title() + _r(reviewed, "type") + cite, st["cell"]
+                        ),
+                        _wrap_cell(o.get("description", "") + _r(reviewed, "description"), st["cell"]),
+                        (o.get("due_date") or "")[:10],
+                        str(o.get("days_until", "")),
+                    ]
+                )
+            story.append(_col_table(data, [1.2 * inch, 3.2 * inch, 0.9 * inch, 0.6 * inch]))
+            story.append(Spacer(1, 0.15 * inch))
 
         if not obligations:
-            story.append(Paragraph('No obligations of record for this project.', st['body']))
+            story.append(Paragraph("No obligations of record for this project.", st["body"]))
 
         _build_appendix(story, st, tracker)
         doc.build(story, onFirstPage=_footer, onLaterPages=_footer)

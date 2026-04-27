@@ -28,11 +28,13 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 router = APIRouter(prefix="/api", tags=["api"])
 
+
 class ProjectCreate(BaseModel):
     name: str
     jurisdiction: str
     owner_org: str = None
     org_id: int | None = None
+
 
 class ProjectResponse(BaseModel):
     model_config = {"from_attributes": True}
@@ -42,6 +44,7 @@ class ProjectResponse(BaseModel):
     jurisdiction: str
     created_at: str
 
+
 @router.post("/projects")
 def create_project(
     project: ProjectCreate,
@@ -50,10 +53,14 @@ def create_project(
 ):
     # If org_id supplied, verify membership
     if project.org_id:
-        m = db.query(OrgMembership).filter(
-            OrgMembership.user_id == user.id,
-            OrgMembership.org_id == project.org_id,
-        ).first()
+        m = (
+            db.query(OrgMembership)
+            .filter(
+                OrgMembership.user_id == user.id,
+                OrgMembership.org_id == project.org_id,
+            )
+            .first()
+        )
         if not m or ORG_ROLE_RANK.get(m.role, 0) < ORG_ROLE_RANK.get("member", 0):
             raise HTTPException(status_code=403, detail="Not a member of that organization")
 
@@ -78,7 +85,14 @@ def create_project(
     db.add(pa)
     db.commit()
     db.refresh(db_project)
-    return {"id": db_project.id, "name": db_project.name, "jurisdiction": db_project.jurisdiction, "created_at": db_project.created_at.isoformat(), "your_role": "owner"}
+    return {
+        "id": db_project.id,
+        "name": db_project.name,
+        "jurisdiction": db_project.jurisdiction,
+        "created_at": db_project.created_at.isoformat(),
+        "your_role": "owner",
+    }
+
 
 @router.get("/projects/{project_id}")
 def get_project(
@@ -88,7 +102,14 @@ def get_project(
 ):
     role = require_project_role(db, user, project_id, "viewer")
     project = db.query(Project).filter(Project.id == project_id).first()
-    return {"id": project.id, "name": project.name, "jurisdiction": project.jurisdiction, "created_at": project.created_at.isoformat(), "your_role": role}
+    return {
+        "id": project.id,
+        "name": project.name,
+        "jurisdiction": project.jurisdiction,
+        "created_at": project.created_at.isoformat(),
+        "your_role": role,
+    }
+
 
 @router.get("/projects")
 def list_projects(
@@ -112,9 +133,11 @@ def list_projects(
         ]
     except Exception as e:
         import traceback
+
         print(f"ERROR in list_projects: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 def _run_extraction(document_id: int, file_path_str: str):
     db = SessionLocal()
@@ -148,10 +171,14 @@ async def upload_document(
     contents = await file.read()
     content_hash = hashlib.sha256(contents).hexdigest()
 
-    existing = db.query(Document).filter(
-        Document.project_id == project_id,
-        Document.content_hash == content_hash,
-    ).first()
+    existing = (
+        db.query(Document)
+        .filter(
+            Document.project_id == project_id,
+            Document.content_hash == content_hash,
+        )
+        .first()
+    )
     if existing and not force:
         return {
             "id": existing.id,
@@ -210,6 +237,7 @@ async def upload_document(
         "extraction_status": "queued",
     }
 
+
 @router.get("/documents/{document_id}/file")
 def get_document_file(
     document_id: int,
@@ -245,20 +273,14 @@ def get_document_contributions(
     require_project_role(db, user, doc.project_id, "viewer")
 
     instruments = (
-        db.query(Instrument)
-        .filter(Instrument.source_document_id == document_id)
-        .order_by(Instrument.id)
-        .all()
+        db.query(Instrument).filter(Instrument.source_document_id == document_id).order_by(Instrument.id).all()
     )
     instrument_ids = [i.id for i in instruments]
 
     obligations = []
     if instrument_ids:
         obligations = (
-            db.query(Obligation)
-            .filter(Obligation.instrument_id.in_(instrument_ids))
-            .order_by(Obligation.id)
-            .all()
+            db.query(Obligation).filter(Obligation.instrument_id.in_(instrument_ids)).order_by(Obligation.id).all()
         )
 
     return {
@@ -307,6 +329,7 @@ def list_documents(
         for d in docs
     ]
 
+
 @router.post("/projects/{project_id}/extract")
 def extract_document(
     project_id: int,
@@ -315,10 +338,7 @@ def extract_document(
     user: User = Depends(get_current_user),
 ):
     require_project_role(db, user, project_id, "editor")
-    doc = db.query(Document).filter(
-        Document.id == document_id,
-        Document.project_id == project_id
-    ).first()
+    doc = db.query(Document).filter(Document.id == document_id, Document.project_id == project_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -326,6 +346,7 @@ def extract_document(
     db.commit()
 
     return {"status": "extraction_started", "document_id": document_id}
+
 
 @router.get("/projects/{project_id}/ownership")
 def get_ownership(
@@ -340,10 +361,14 @@ def get_ownership(
 
     tracts = db.query(Tract).filter(Tract.project_id == project_id).all()
     interests = db.query(Interest).join(Tract).filter(Tract.project_id == project_id).all()
-    lease_count = db.query(Instrument).filter(
-        Instrument.project_id == project_id,
-        Instrument.type == "lease",
-    ).count()
+    lease_count = (
+        db.query(Instrument)
+        .filter(
+            Instrument.project_id == project_id,
+            Instrument.type == "lease",
+        )
+        .count()
+    )
 
     total_acres = sum(t.gross_acres or 0 for t in tracts)
     leased_acres = total_acres if lease_count > 0 else 0
@@ -391,16 +416,18 @@ def get_ownership(
                 field = "grantee" if "grantee" in (data.get("source_quotes") or {}) else "lessee"
         source = _source_for_instrument(source_inst, db, field) if source_inst else None
 
-        owners.append({
-            "party_id": party.id if party else None,
-            "interest_id": i.id,
-            "name": party_name,
-            "fraction": f"{num}/{denom}",
-            "percentage": pct,
-            "mineral_estate": mineral_estate,
-            "source": source,
-            "reviewed": {**party_reviewed, **interest_reviewed},
-        })
+        owners.append(
+            {
+                "party_id": party.id if party else None,
+                "interest_id": i.id,
+                "name": party_name,
+                "fraction": f"{num}/{denom}",
+                "percentage": pct,
+                "mineral_estate": mineral_estate,
+                "source": source,
+                "reviewed": {**party_reviewed, **interest_reviewed},
+            }
+        )
 
     return {
         "project_id": project_id,
@@ -409,6 +436,7 @@ def get_ownership(
         "leased_acres": leased_acres,
         "open_acres": max(total_acres - leased_acres, 0),
     }
+
 
 @router.get("/projects/{project_id}/obligations")
 def get_obligations(
@@ -433,7 +461,11 @@ def get_obligations(
         source = None
         if o.instrument_id:
             inst = db.query(Instrument).filter(Instrument.id == o.instrument_id).first()
-            field = "primary_term" if "term" in (o.type or "") else "continuous_drilling" if "drilling" in (o.type or "") else None
+            field = (
+                "primary_term"
+                if "term" in (o.type or "")
+                else "continuous_drilling" if "drilling" in (o.type or "") else None
+            )
             source = _source_for_instrument(inst, db, field)
 
         params = o.params if isinstance(o.params, dict) else {}
@@ -442,18 +474,21 @@ def get_obligations(
         obl_resolved = resolved_data(db, "obligation", o.id, obl_base)
         obl_reviewed = obl_resolved.get("_reviewed_fields") or {}
 
-        items.append({
-            "id": o.id,
-            "type": obl_resolved.get("type") or "Obligation",
-            "due_date": o.due_date.isoformat() if o.due_date else None,
-            "days_until": days_until,
-            "priority": priority_for(days_until),
-            "description": obl_resolved.get("description") or "",
-            "source": source,
-            "reviewed": obl_reviewed,
-        })
+        items.append(
+            {
+                "id": o.id,
+                "type": obl_resolved.get("type") or "Obligation",
+                "due_date": o.due_date.isoformat() if o.due_date else None,
+                "days_until": days_until,
+                "priority": priority_for(days_until),
+                "description": obl_resolved.get("description") or "",
+                "source": source,
+                "reviewed": obl_reviewed,
+            }
+        )
 
     return {"project_id": project_id, "obligations": items}
+
 
 def _instrument_parties(inst: Instrument, db: Session) -> tuple[str, str]:
     data = resolved_data(db, "instrument", inst.id, inst.extracted_data)
@@ -478,6 +513,7 @@ def _source_for_instrument(inst: Instrument, db: Session, field: str = None) -> 
         "quote": quote,
     }
 
+
 @router.get("/projects/{project_id}/runsheet")
 def get_runsheet(
     project_id: int,
@@ -490,10 +526,7 @@ def get_runsheet(
         raise HTTPException(status_code=404, detail="Project not found")
 
     instruments = (
-        db.query(Instrument)
-        .filter(Instrument.project_id == project_id)
-        .order_by(Instrument.recorded_at.asc())
-        .all()
+        db.query(Instrument).filter(Instrument.project_id == project_id).order_by(Instrument.recorded_at.asc()).all()
     )
 
     chain = []
@@ -509,12 +542,7 @@ def get_runsheet(
         data = resolved_data(db, "instrument", inst.id, inst.extracted_data)
         quotes = data.get("source_quotes") or {}
         # For the runsheet row, pick the most representative quote (legal description or grantor)
-        best_quote = (
-            quotes.get("legal_description")
-            or quotes.get("grantor")
-            or quotes.get("lessor")
-            or None
-        )
+        best_quote = quotes.get("legal_description") or quotes.get("grantor") or quotes.get("lessor") or None
         source = None
         if inst.source_document_id:
             doc = db.query(Document).filter(Document.id == inst.source_document_id).first()
@@ -523,35 +551,42 @@ def get_runsheet(
                 source = {"document_id": doc.id, "filename": filename, "quote": best_quote}
 
         reviewed = data.get("_reviewed_fields") or {}
-        chain.append({
-            "instrument_id": inst.id,
-            "instrument_type": (inst.type or "instrument").replace("_", " ").title(),
-            "grantor": grantor or "Unknown",
-            "grantee": grantee or "Unknown",
-            "date": inst.recorded_at.isoformat()[:10] if inst.recorded_at else "",
-            "status": status,
-            "source": source,
-            "reviewed": reviewed,
-        })
+        chain.append(
+            {
+                "instrument_id": inst.id,
+                "instrument_type": (inst.type or "instrument").replace("_", " ").title(),
+                "grantor": grantor or "Unknown",
+                "grantee": grantee or "Unknown",
+                "date": inst.recorded_at.isoformat()[:10] if inst.recorded_at else "",
+                "status": status,
+                "source": source,
+                "reviewed": reviewed,
+            }
+        )
 
     gaps = []
     for idx in range(len(chain) - 1):
         prev, nxt = chain[idx], chain[idx + 1]
         if prev["grantee"] != nxt["grantor"] and "Unknown" not in (prev["grantee"], nxt["grantor"]):
-            gaps.append({
-                "from": prev["grantee"],
-                "to": nxt["grantor"],
-                "missing_document": f"Missing conveyance from {prev['grantee']} to {nxt['grantor']}",
-            })
+            gaps.append(
+                {
+                    "from": prev["grantee"],
+                    "to": nxt["grantor"],
+                    "missing_document": f"Missing conveyance from {prev['grantee']} to {nxt['grantor']}",
+                }
+            )
     for item in chain:
         if item["status"] == "flagged":
-            gaps.append({
-                "from": item["grantor"],
-                "to": item["grantee"],
-                "missing_document": f"Unknown party in {item['instrument_type']} - curative affidavit needed",
-            })
+            gaps.append(
+                {
+                    "from": item["grantor"],
+                    "to": item["grantee"],
+                    "missing_document": f"Unknown party in {item['instrument_type']} - curative affidavit needed",
+                }
+            )
 
     return {"project_id": project_id, "chain": chain, "gaps": gaps}
+
 
 @router.get("/projects/{project_id}/risk")
 def get_risk(
@@ -578,6 +613,7 @@ def get_risk(
             royalties.append(float(royalty) * (100 if royalty <= 1 else 1))
         elif isinstance(royalty, str):
             import re as _re
+
             frac_match = _re.search(r"(\d+)\s*/\s*(\d+)", royalty)
             pct_match = _re.search(r"([\d.]+)\s*%", royalty)
             if frac_match:
@@ -601,13 +637,15 @@ def get_risk(
     for inst in instruments:
         grantor, grantee = _instrument_parties(inst, db)
         if "unknown" in (grantor + " " + grantee).lower():
-            flagged.append({
-                "id": idx,
-                "lease": f"{(inst.type or 'instrument').replace('_', ' ').title()}",
-                "risk_type": "Title Defect",
-                "severity": "critical",
-                "description": f"Unknown party in chain of title: {grantor or '?'} → {grantee or '?'}. Curative needed.",
-            })
+            flagged.append(
+                {
+                    "id": idx,
+                    "lease": f"{(inst.type or 'instrument').replace('_', ' ').title()}",
+                    "risk_type": "Title Defect",
+                    "severity": "critical",
+                    "description": f"Unknown party in chain of title: {grantor or '?'} → {grantee or '?'}. Curative needed.",
+                }
+            )
             idx += 1
 
     for o in obligations:
@@ -615,13 +653,15 @@ def get_risk(
             days = (o.due_date - now).days
             if 0 <= days <= 45:
                 desc = (o.params or {}).get("description") if isinstance(o.params, dict) else None
-                flagged.append({
-                    "id": idx,
-                    "lease": (o.type or "obligation").replace("_", " ").title(),
-                    "risk_type": "Expiration",
-                    "severity": "high" if days <= 30 else "medium",
-                    "description": desc or f"{o.type} due in {days} days",
-                })
+                flagged.append(
+                    {
+                        "id": idx,
+                        "lease": (o.type or "obligation").replace("_", " ").title(),
+                        "risk_type": "Expiration",
+                        "severity": "high" if days <= 30 else "medium",
+                        "description": desc or f"{o.type} due in {days} days",
+                    }
+                )
                 idx += 1
 
     return {
@@ -631,6 +671,7 @@ def get_risk(
         "royalty_range": royalty_range,
         "flagged_issues": flagged,
     }
+
 
 @router.get("/projects/{project_id}/export/ownership")
 def export_ownership_report(
@@ -645,10 +686,14 @@ def export_ownership_report(
 
     tracts = db.query(Tract).filter(Tract.project_id == project_id).all()
     interests = db.query(Interest).join(Tract).filter(Tract.project_id == project_id).all()
-    lease_count = db.query(Instrument).filter(
-        Instrument.project_id == project_id,
-        Instrument.type == "lease",
-    ).count()
+    lease_count = (
+        db.query(Instrument)
+        .filter(
+            Instrument.project_id == project_id,
+            Instrument.type == "lease",
+        )
+        .count()
+    )
 
     total_acres = sum(t.gross_acres or 0 for t in tracts)
     leased_acres = total_acres if lease_count > 0 else 0
@@ -665,13 +710,15 @@ def export_ownership_report(
         interest_base = {"mineral_estate": i.mineral_estate or "", "burdens": str(i.burdens or "None")}
         interest_resolved = resolved_data(db, "interest", i.id, interest_base)
 
-        owners.append({
-            "name": party_name,
-            "fraction": f"{num}/{denom}",
-            "percentage": round((num / denom) * 100, 2) if denom else 0,
-            "mineral_estate": interest_resolved.get("mineral_estate") or "Unknown",
-            "burdens": interest_resolved.get("burdens") or "None",
-        })
+        owners.append(
+            {
+                "name": party_name,
+                "fraction": f"{num}/{denom}",
+                "percentage": round((num / denom) * 100, 2) if denom else 0,
+                "mineral_estate": interest_resolved.get("mineral_estate") or "Unknown",
+                "burdens": interest_resolved.get("burdens") or "None",
+            }
+        )
 
     ownership_data = {
         "project_id": project_id,
@@ -703,7 +750,8 @@ def export_runsheet(
     runsheet_data = get_runsheet(project_id, db, user)
     pdf_buffer = RunsheetGenerator.generate_pdf(project.name, project.jurisdiction, runsheet_data)
     return StreamingResponse(
-        pdf_buffer, media_type="application/pdf",
+        pdf_buffer,
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{project.name}_Runsheet.pdf"'},
     )
 
@@ -720,10 +768,10 @@ def export_title_opinion(
         raise HTTPException(status_code=404, detail="Project not found")
     runsheet_data = get_runsheet(project_id, db, user)
     ownership_data = get_ownership(project_id, db, user)
-    pdf_buffer = TitleOpinionGenerator.generate_pdf(
-        project.name, project.jurisdiction, runsheet_data, ownership_data)
+    pdf_buffer = TitleOpinionGenerator.generate_pdf(project.name, project.jurisdiction, runsheet_data, ownership_data)
     return StreamingResponse(
-        pdf_buffer, media_type="application/pdf",
+        pdf_buffer,
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{project.name}_Title_Opinion.pdf"'},
     )
 
@@ -739,10 +787,10 @@ def export_stipulations(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     obligations_data = get_obligations(project_id, db, user)
-    pdf_buffer = StipulationsGenerator.generate_pdf(
-        project.name, project.jurisdiction, obligations_data)
+    pdf_buffer = StipulationsGenerator.generate_pdf(project.name, project.jurisdiction, obligations_data)
     return StreamingResponse(
-        pdf_buffer, media_type="application/pdf",
+        pdf_buffer,
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{project.name}_Stipulations.pdf"'},
     )
 
@@ -801,14 +849,16 @@ def get_tract_map(
                     if d:
                         fn = d.s3_key.split("_", 1)[-1] if "_" in (d.s3_key or "") else (d.s3_key or "")
                         doc = {"id": d.id, "filename": fn}
-                tract_instruments.append({
-                    "instrument_id": inst.id,
-                    "instrument_type": (inst.type or "instrument").replace("_", " ").title(),
-                    "grantor": grantor,
-                    "grantee": grantee,
-                    "date": inst.recorded_at.isoformat()[:10] if inst.recorded_at else None,
-                    "document": doc,
-                })
+                tract_instruments.append(
+                    {
+                        "instrument_id": inst.id,
+                        "instrument_type": (inst.type or "instrument").replace("_", " ").title(),
+                        "grantor": grantor,
+                        "grantee": grantee,
+                        "date": inst.recorded_at.isoformat()[:10] if inst.recorded_at else None,
+                        "document": doc,
+                    }
+                )
 
         is_leased = (tract.legal_description or "").strip() in leased_legal_descs
 
@@ -847,14 +897,16 @@ def get_tract_map(
                             "grid_position": sec.get("grid_position"),
                             "tracts": [],
                         }
-                    township_index[twp_key]["sections"][sn]["tracts"].append({
-                        "tract_id": tract.id,
-                        "is_leased": is_leased,
-                        "coverage_pct": sec.get("coverage_pct", 1.0),
-                        "gross_acres": sec.get("gross_acres") or tract.gross_acres,
-                        "aliquot_parts": sec.get("aliquot_parts", []),
-                        "instruments": tract_instruments,
-                    })
+                    township_index[twp_key]["sections"][sn]["tracts"].append(
+                        {
+                            "tract_id": tract.id,
+                            "is_leased": is_leased,
+                            "coverage_pct": sec.get("coverage_pct", 1.0),
+                            "gross_acres": sec.get("gross_acres") or tract.gross_acres,
+                            "aliquot_parts": sec.get("aliquot_parts", []),
+                            "instruments": tract_instruments,
+                        }
+                    )
 
     # Convert township index sections to lists; sort deterministically
     townships = []
@@ -862,12 +914,14 @@ def get_tract_map(
         twp_out = dict(twp_data)
         twp_out["sections"] = list(twp_data["sections"].values())
         townships.append(twp_out)
-    townships.sort(key=lambda t: (
-        t["township_number"] or 0,
-        t["township_dir"] or "",
-        t["range_number"] or 0,
-        t["range_dir"] or "",
-    ))
+    townships.sort(
+        key=lambda t: (
+            t["township_number"] or 0,
+            t["township_dir"] or "",
+            t["range_number"] or 0,
+            t["range_dir"] or "",
+        )
+    )
 
     return {
         "project_id": project_id,
@@ -893,6 +947,7 @@ def delete_project(
     db.delete(project)
     db.commit()
     return {"status": "deleted", "id": project_id}
+
 
 @router.get("/search")
 def global_search(
@@ -950,10 +1005,7 @@ def global_search(
     return {
         "query": term,
         "results": {
-            "projects": [
-                {"id": p.id, "name": p.name, "jurisdiction": p.jurisdiction}
-                for p in projects
-            ],
+            "projects": [{"id": p.id, "name": p.name, "jurisdiction": p.jurisdiction} for p in projects],
             "documents": [
                 {
                     "id": d.id,

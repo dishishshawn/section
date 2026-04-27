@@ -3,11 +3,14 @@
 import pytest
 
 
-@pytest.mark.parametrize("endpoint", [
-    "/api/projects/{pid}/export/ownership",
-    "/api/projects/{pid}/export/runsheet",
-    "/api/projects/{pid}/export/stipulations",
-])
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "/api/projects/{pid}/export/ownership",
+        "/api/projects/{pid}/export/runsheet",
+        "/api/projects/{pid}/export/stipulations",
+    ],
+)
 def test_export_pdf_smoke(authenticated_client, seed, endpoint):
     c = authenticated_client(seed["owner"])
     r = c.get(endpoint.format(pid=seed["project"].id))

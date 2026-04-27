@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 import models
 from auth import CODE_MAX_ATTEMPTS, issue_code
 
-
 # ---------------------------------------------------------------------------
 # Allowlist gate
 # ---------------------------------------------------------------------------
@@ -24,12 +23,7 @@ def test_request_code_unknown_email_silently_no_ops(client, db, monkeypatch):
     body = r.json()
     # Generic response — no dev_code echoed for disallowed emails, even in dev.
     assert body.get("dev_code") is None
-    assert (
-        db.query(models.EmailVerificationCode)
-        .filter_by(email="stranger@example.com")
-        .count()
-        == 0
-    )
+    assert db.query(models.EmailVerificationCode).filter_by(email="stranger@example.com").count() == 0
 
 
 def test_request_code_allowed_for_existing_user(client, db, monkeypatch):
@@ -122,11 +116,7 @@ def test_verify_code_rejects_expired(client, db):
     db.add(models.User(email="slowpoke@example.com", session_version=0))
     db.commit()
     code = issue_code(db, "slowpoke@example.com")
-    row = (
-        db.query(models.EmailVerificationCode)
-        .filter_by(email="slowpoke@example.com")
-        .first()
-    )
+    row = db.query(models.EmailVerificationCode).filter_by(email="slowpoke@example.com").first()
     row.expires_at = datetime.utcnow() - timedelta(seconds=1)
     db.commit()
     r = client.post(
@@ -173,6 +163,7 @@ def test_send_verification_code_email_payload(monkeypatch):
 
     with patch.dict("sys.modules", {"resend": mock_resend}):
         from auth import send_verification_code
+
         send_verification_code("landman@section.app", "428193")
 
     assert "428193" in sent_payload.get("subject", "")
@@ -190,6 +181,7 @@ def test_send_verification_code_email_payload(monkeypatch):
 
 def test_verification_code_html_template():
     from email_templates import verification_code_html
+
     html = verification_code_html("428193", expiry_minutes=10)
     assert "428193" in html
     assert "10" in html

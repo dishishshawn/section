@@ -28,15 +28,27 @@ def _require_editor(db: Session, user: User, project_id: int):
     """Gate PATCH endpoints: must have editor or owner role on the project."""
     require_project_role(db, user, project_id, "editor")
 
+
 INSTRUMENT_FIELDS = {
-    "grantor", "grantee", "lessor", "lessee",
-    "date", "legal_description", "royalty", "type",
-    "book", "page", "volume", "recording_number",
+    "grantor",
+    "grantee",
+    "lessor",
+    "lessee",
+    "date",
+    "legal_description",
+    "royalty",
+    "type",
+    "book",
+    "page",
+    "volume",
+    "recording_number",
 }
 
 INTEREST_FIELDS = {
-    "fraction_numerator", "fraction_denominator",
-    "mineral_estate", "burdens",
+    "fraction_numerator",
+    "fraction_denominator",
+    "mineral_estate",
+    "burdens",
 }
 
 PARTY_FIELDS = {"name", "type"}
@@ -232,10 +244,10 @@ def get_audit_log(
     overrides = (
         db.query(FactOverride)
         .filter(
-            ((FactOverride.entity_type == "instrument") & (FactOverride.entity_id.in_(instrument_ids))) |
-            ((FactOverride.entity_type == "interest") & (FactOverride.entity_id.in_(interest_ids))) |
-            ((FactOverride.entity_type == "party") & (FactOverride.entity_id.in_(party_ids))) |
-            ((FactOverride.entity_type == "obligation") & (FactOverride.entity_id.in_(obligation_ids)))
+            ((FactOverride.entity_type == "instrument") & (FactOverride.entity_id.in_(instrument_ids)))
+            | ((FactOverride.entity_type == "interest") & (FactOverride.entity_id.in_(interest_ids)))
+            | ((FactOverride.entity_type == "party") & (FactOverride.entity_id.in_(party_ids)))
+            | ((FactOverride.entity_type == "obligation") & (FactOverride.entity_id.in_(obligation_ids)))
         )
         .order_by(FactOverride.changed_at.desc())
         .all()

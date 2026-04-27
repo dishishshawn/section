@@ -27,14 +27,11 @@ from sqlalchemy.orm import Session
 
 from models import OrgMembership, Project, ProjectAccess, User
 
-
 PROJECT_ROLE_RANK = {"owner": 3, "editor": 2, "viewer": 1}
 ORG_ROLE_RANK = {"owner": 3, "admin": 2, "member": 1}
 
 
-def effective_project_role(
-    db: Session, user: User, project_id: int
-) -> Optional[str]:
+def effective_project_role(db: Session, user: User, project_id: int) -> Optional[str]:
     """Return the caller's effective role on the project, or None if no access."""
     project_obj = db.query(Project).filter(Project.id == project_id).first()
 
@@ -81,35 +78,15 @@ def user_accessible_project_ids(db: Session, user: User) -> set[int]:
       - membership in an organization that owns projects
       - legacy `created_by` projects (no org)
     """
-    explicit_ids = {
-        r[0]
-        for r in db.query(ProjectAccess.project_id)
-        .filter(ProjectAccess.user_id == user.id)
-        .all()
-    }
+    explicit_ids = {r[0] for r in db.query(ProjectAccess.project_id).filter(ProjectAccess.user_id == user.id).all()}
 
-    org_ids = [
-        r[0]
-        for r in db.query(OrgMembership.org_id)
-        .filter(OrgMembership.user_id == user.id)
-        .all()
-    ]
+    org_ids = [r[0] for r in db.query(OrgMembership.org_id).filter(OrgMembership.user_id == user.id).all()]
     if org_ids:
-        org_project_ids = {
-            r[0]
-            for r in db.query(Project.id)
-            .filter(Project.org_id.in_(org_ids))
-            .all()
-        }
+        org_project_ids = {r[0] for r in db.query(Project.id).filter(Project.org_id.in_(org_ids)).all()}
     else:
         org_project_ids = set()
 
-    created_ids = {
-        r[0]
-        for r in db.query(Project.id)
-        .filter(Project.created_by == user.id)
-        .all()
-    }
+    created_ids = {r[0] for r in db.query(Project.id).filter(Project.created_by == user.id).all()}
 
     return explicit_ids | org_project_ids | created_ids
 
@@ -126,9 +103,7 @@ def require_editor(role: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="Requires 'editor' access on this project")
 
 
-def require_project_role(
-    db: Session, user: User, project_id: int, min_role: str = "viewer"
-) -> str:
+def require_project_role(db: Session, user: User, project_id: int, min_role: str = "viewer") -> str:
     """
     Resolve the caller's effective role and gate on `min_role`.
     - Returns the role string on success.
@@ -147,18 +122,12 @@ def require_project_role(
     return role
 
 
-def require_org_role(
-    db: Session, user: User, org_id: int, min_role: str = "member"
-) -> OrgMembership:
+def require_org_role(db: Session, user: User, org_id: int, min_role: str = "member") -> OrgMembership:
     """
     Gate on organization-level role. Returns the OrgMembership on success.
     Raises 403 on missing membership or insufficient rank.
     """
-    m = (
-        db.query(OrgMembership)
-        .filter(OrgMembership.user_id == user.id, OrgMembership.org_id == org_id)
-        .first()
-    )
+    m = db.query(OrgMembership).filter(OrgMembership.user_id == user.id, OrgMembership.org_id == org_id).first()
     if not m:
         raise HTTPException(status_code=403, detail="Not a member of that organization")
     if ORG_ROLE_RANK.get(m.role, 0) < ORG_ROLE_RANK.get(min_role, 0):

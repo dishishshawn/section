@@ -4,6 +4,7 @@ Resolves the database URL from the DATABASE_URL environment variable so that
 `alembic upgrade head` targets the same DB as the running FastAPI app.
 Defaults to the local SQLite dev DB when DATABASE_URL is unset.
 """
+
 from __future__ import annotations
 
 import os

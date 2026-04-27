@@ -12,7 +12,9 @@ from models import Tract, Party, Instrument, Interest, Obligation, Document
 
 try:
     from anthropic import Anthropic
+
     _client: Optional[Anthropic] = None
+
     def _get_client() -> Optional[Anthropic]:
         global _client
         key = os.getenv("ANTHROPIC_API_KEY", "")
@@ -25,7 +27,9 @@ try:
                 kwargs["base_url"] = base_url
             _client = Anthropic(**kwargs)
         return _client
+
 except ImportError:
+
     def _get_client():
         return None
 
@@ -234,11 +238,11 @@ def _ocr_pdf_text(path: Path) -> str:
 def extract_pdf_text(path: Path) -> str:
     try:
         from pypdf import PdfReader
+
         reader = PdfReader(str(path))
 
         pages_text = "\n\n".join(
-            f"[PAGE {idx + 1}]\n{(page.extract_text() or '').strip()}"
-            for idx, page in enumerate(reader.pages)
+            f"[PAGE {idx + 1}]\n{(page.extract_text() or '').strip()}" for idx, page in enumerate(reader.pages)
         )
 
         fields = reader.get_fields() or {}
@@ -333,7 +337,7 @@ def _extract_json_from_response(content: str) -> Optional[dict]:
         end = content.rfind("}")
         if start == -1 or end == -1 or end < start:
             return None
-        candidate = content[start:end + 1]
+        candidate = content[start : end + 1]
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
@@ -569,13 +573,19 @@ def _get_or_create_party(db: Session, project_id: int, name: str, ptype: str = "
     return party
 
 
-def _get_or_create_tract(db: Session, project_id: int, legal_desc: Optional[str], gross_acres: Optional[float]) -> Tract:
+def _get_or_create_tract(
+    db: Session, project_id: int, legal_desc: Optional[str], gross_acres: Optional[float]
+) -> Tract:
     tract = None
     if legal_desc:
-        tract = db.query(Tract).filter(
-            Tract.project_id == project_id,
-            Tract.legal_description == legal_desc,
-        ).first()
+        tract = (
+            db.query(Tract)
+            .filter(
+                Tract.project_id == project_id,
+                Tract.legal_description == legal_desc,
+            )
+            .first()
+        )
     if tract:
         if gross_acres and not tract.gross_acres:
             tract.gross_acres = gross_acres
@@ -631,47 +641,59 @@ def materialize_lease(db: Session, project_id: int, document_id: int, lease: Lea
     db.flush()
 
     if lessor_party and tract:
-        existing = db.query(Interest).filter(
-            Interest.tract_id == tract.id,
-            Interest.party_id == lessor_party.id,
-        ).first()
+        existing = (
+            db.query(Interest)
+            .filter(
+                Interest.tract_id == tract.id,
+                Interest.party_id == lessor_party.id,
+            )
+            .first()
+        )
         if not existing:
             burdens = {"royalty_to_lessee": lease.royalty} if lease.royalty else None
-            db.add(Interest(
-                tract_id=tract.id,
-                party_id=lessor_party.id,
-                fraction_numerator=1,
-                fraction_denominator=1,
-                mineral_estate=f"Minerals leased to {lease.lessee}" if lease.lessee else "Minerals",
-                burdens=burdens,
-            ))
+            db.add(
+                Interest(
+                    tract_id=tract.id,
+                    party_id=lessor_party.id,
+                    fraction_numerator=1,
+                    fraction_denominator=1,
+                    mineral_estate=f"Minerals leased to {lease.lessee}" if lease.lessee else "Minerals",
+                    burdens=burdens,
+                )
+            )
 
     term_days = _parse_primary_term_days(lease.primary_term)
     base = effective or datetime.utcnow()
     if term_days:
-        db.add(Obligation(
-            project_id=project_id,
-            instrument_id=inst.id,
-            type="primary_term_expiration",
-            due_date=base + timedelta(days=term_days),
-            params={"description": f"Primary term ({lease.primary_term}) expires"},
-        ))
+        db.add(
+            Obligation(
+                project_id=project_id,
+                instrument_id=inst.id,
+                type="primary_term_expiration",
+                due_date=base + timedelta(days=term_days),
+                params={"description": f"Primary term ({lease.primary_term}) expires"},
+            )
+        )
     if lease.continuous_drilling:
-        db.add(Obligation(
-            project_id=project_id,
-            instrument_id=inst.id,
-            type="continuous_drilling",
-            due_date=datetime.utcnow() + timedelta(days=90),
-            params={"description": lease.continuous_drilling},
-        ))
+        db.add(
+            Obligation(
+                project_id=project_id,
+                instrument_id=inst.id,
+                type="continuous_drilling",
+                due_date=datetime.utcnow() + timedelta(days=90),
+                params={"description": lease.continuous_drilling},
+            )
+        )
     if lease.pugh_clauses:
-        db.add(Obligation(
-            project_id=project_id,
-            instrument_id=inst.id,
-            type="pugh_trigger",
-            due_date=(base + timedelta(days=term_days)) if term_days else (datetime.utcnow() + timedelta(days=180)),
-            params={"description": "Pugh clause release trigger at end of primary term"},
-        ))
+        db.add(
+            Obligation(
+                project_id=project_id,
+                instrument_id=inst.id,
+                type="pugh_trigger",
+                due_date=(base + timedelta(days=term_days)) if term_days else (datetime.utcnow() + timedelta(days=180)),
+                params={"description": "Pugh clause release trigger at end of primary term"},
+            )
+        )
 
 
 def materialize_deed(db: Session, project_id: int, document_id: int, deed: DeedExtraction) -> None:
@@ -682,31 +704,35 @@ def materialize_deed(db: Session, project_id: int, document_id: int, deed: DeedE
     grantor = _get_or_create_party(db, project_id, deed.grantor or "", "individual")
     grantee = _get_or_create_party(db, project_id, deed.grantee or "", "entity")
 
-    db.add(Instrument(
-        project_id=project_id,
-        type="warranty_deed",
-        recorded_at=_parse_date(deed.date),
-        source_document_id=document_id,
-        extracted_data={
-            "grantor": deed.grantor,
-            "grantee": deed.grantee,
-            "interest_conveyed": deed.interest_conveyed,
-            "reservations": deed.reservations,
-            "mineral_estate": deed.mineral_estate,
-            "source_quotes": deed.source_quotes or {},
-            "source_pages": deed.source_pages or {},
-        },
-    ))
+    db.add(
+        Instrument(
+            project_id=project_id,
+            type="warranty_deed",
+            recorded_at=_parse_date(deed.date),
+            source_document_id=document_id,
+            extracted_data={
+                "grantor": deed.grantor,
+                "grantee": deed.grantee,
+                "interest_conveyed": deed.interest_conveyed,
+                "reservations": deed.reservations,
+                "mineral_estate": deed.mineral_estate,
+                "source_quotes": deed.source_quotes or {},
+                "source_pages": deed.source_pages or {},
+            },
+        )
+    )
 
     if grantee and deed.fraction_numerator and deed.fraction_denominator:
-        db.add(Interest(
-            tract_id=tract.id,
-            party_id=grantee.id,
-            fraction_numerator=deed.fraction_numerator,
-            fraction_denominator=deed.fraction_denominator,
-            mineral_estate=deed.mineral_estate or "Minerals Only",
-            burdens=deed.reservations or None,
-        ))
+        db.add(
+            Interest(
+                tract_id=tract.id,
+                party_id=grantee.id,
+                fraction_numerator=deed.fraction_numerator,
+                fraction_denominator=deed.fraction_denominator,
+                mineral_estate=deed.mineral_estate or "Minerals Only",
+                burdens=deed.reservations or None,
+            )
+        )
 
 
 def _parse_primary_term_days(term: Optional[str]) -> Optional[int]:
@@ -790,19 +816,21 @@ def materialize_assignment(db: Session, project_id: int, document_id: int, assig
     _get_or_create_party(db, project_id, assignment.grantor or "", "entity")
     _get_or_create_party(db, project_id, assignment.grantee or "", "entity")
 
-    db.add(Instrument(
-        project_id=project_id,
-        type="assignment",
-        recorded_at=_parse_date(assignment.date),
-        source_document_id=document_id,
-        extracted_data={
-            "grantor": assignment.grantor,
-            "grantee": assignment.grantee,
-            "interest_conveyed": assignment.interest_conveyed,
-            "source_quotes": assignment.source_quotes or {},
-            "source_pages": assignment.source_pages or {},
-        },
-    ))
+    db.add(
+        Instrument(
+            project_id=project_id,
+            type="assignment",
+            recorded_at=_parse_date(assignment.date),
+            source_document_id=document_id,
+            extracted_data={
+                "grantor": assignment.grantor,
+                "grantee": assignment.grantee,
+                "interest_conveyed": assignment.interest_conveyed,
+                "source_quotes": assignment.source_quotes or {},
+                "source_pages": assignment.source_pages or {},
+            },
+        )
+    )
 
 
 def process_document(db: Session, document: Document, file_path: Path) -> dict:
@@ -817,7 +845,7 @@ def process_document(db: Session, document: Document, file_path: Path) -> dict:
 
     if not text or text.startswith("[PDF extraction failed"):
         document.ocr_status = "failed"
-        document.extraction_status = f"failed: no text extracted"
+        document.extraction_status = "failed: no text extracted"
         db.commit()
         _log(f"{file_path.name} produced no extractable text (likely scanned image)")
         return {"status": "failed", "reason": "no_text"}

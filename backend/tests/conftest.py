@@ -97,6 +97,7 @@ def client(app):
 # Seed data
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="function")
 def seed(db):
     """
@@ -123,13 +124,15 @@ def seed(db):
     db.flush()
 
     # Org memberships
-    db.add_all([
-        models.OrgMembership(user_id=owner.id, org_id=org_a.id, role="owner"),
-        models.OrgMembership(user_id=admin.id, org_id=org_a.id, role="admin"),
-        models.OrgMembership(user_id=editor.id, org_id=org_a.id, role="member"),
-        models.OrgMembership(user_id=viewer.id, org_id=org_a.id, role="member"),
-        models.OrgMembership(user_id=outsider.id, org_id=org_b.id, role="owner"),
-    ])
+    db.add_all(
+        [
+            models.OrgMembership(user_id=owner.id, org_id=org_a.id, role="owner"),
+            models.OrgMembership(user_id=admin.id, org_id=org_a.id, role="admin"),
+            models.OrgMembership(user_id=editor.id, org_id=org_a.id, role="member"),
+            models.OrgMembership(user_id=viewer.id, org_id=org_a.id, role="member"),
+            models.OrgMembership(user_id=outsider.id, org_id=org_b.id, role="owner"),
+        ]
+    )
     db.flush()
 
     project = models.Project(
@@ -142,14 +145,19 @@ def seed(db):
     db.flush()
 
     # Explicit ProjectAccess rows so editor/viewer get the expected roles.
-    db.add_all([
-        models.ProjectAccess(user_id=owner.id, project_id=project.id,
-                             org_id=org_a.id, role="owner", granted_by=owner.id),
-        models.ProjectAccess(user_id=editor.id, project_id=project.id,
-                             org_id=org_a.id, role="editor", granted_by=owner.id),
-        models.ProjectAccess(user_id=viewer.id, project_id=project.id,
-                             org_id=org_a.id, role="viewer", granted_by=owner.id),
-    ])
+    db.add_all(
+        [
+            models.ProjectAccess(
+                user_id=owner.id, project_id=project.id, org_id=org_a.id, role="owner", granted_by=owner.id
+            ),
+            models.ProjectAccess(
+                user_id=editor.id, project_id=project.id, org_id=org_a.id, role="editor", granted_by=owner.id
+            ),
+            models.ProjectAccess(
+                user_id=viewer.id, project_id=project.id, org_id=org_a.id, role="viewer", granted_by=owner.id
+            ),
+        ]
+    )
 
     tract = models.Tract(
         project_id=project.id,
@@ -203,6 +211,7 @@ def seed(db):
 # Authenticated client factory
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="function")
 def authenticated_client(app):
     """
@@ -210,10 +219,12 @@ def authenticated_client(app):
     section_session cookie set. Uses the real cookie serializer so the auth
     dependency exercises the production code path.
     """
+
     def _make(user):
         cookie = auth.make_session_cookie(user.id, user.session_version or 0)
         c = TestClient(app)
         c.cookies.set("section_session", cookie)
         c.headers.update({"Origin": "http://testserver"})
         return c
+
     return _make

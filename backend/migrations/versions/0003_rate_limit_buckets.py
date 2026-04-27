@@ -9,11 +9,11 @@ Revision ID: 0003_rate_limit_buckets
 Revises: 0002_stripe_webhook_events
 Create Date: 2026-04-23
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-
 
 revision: str = "0003_rate_limit_buckets"
 down_revision: Union[str, None] = "0002_stripe_webhook_events"

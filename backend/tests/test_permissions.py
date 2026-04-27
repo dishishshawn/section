@@ -21,19 +21,19 @@ from permissions import (
     user_accessible_project_ids,
 )
 
-
 # ---------------------------------------------------------------------------
 # effective_project_role across role classes
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "user_key,expected",
     [
-        ("owner", "owner"),      # explicit ProjectAccess row with role=owner
-        ("editor", "editor"),    # explicit ProjectAccess row with role=editor
-        ("viewer", "viewer"),    # explicit ProjectAccess row with role=viewer
-        ("admin", "editor"),     # org admin (no PA row) → editor
-        ("outsider", None),      # different org entirely → None
+        ("owner", "owner"),  # explicit ProjectAccess row with role=owner
+        ("editor", "editor"),  # explicit ProjectAccess row with role=editor
+        ("viewer", "viewer"),  # explicit ProjectAccess row with role=viewer
+        ("admin", "editor"),  # org admin (no PA row) → editor
+        ("outsider", None),  # different org entirely → None
     ],
 )
 def test_effective_project_role_parametrized(db, seed, user_key, expected):
@@ -91,6 +91,7 @@ def test_cross_org_project_access_is_ignored(db, seed):
 # require_editor / require_project_role
 # ---------------------------------------------------------------------------
 
+
 def test_require_editor_rejects_viewer():
     with pytest.raises(HTTPException) as exc:
         require_editor("viewer")
@@ -129,6 +130,7 @@ def test_require_project_role_editor_succeeds(db, seed):
 # ---------------------------------------------------------------------------
 # user_accessible_project_ids
 # ---------------------------------------------------------------------------
+
 
 def test_user_accessible_project_ids_union(db, seed):
     """

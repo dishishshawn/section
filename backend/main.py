@@ -81,25 +81,25 @@ with engine.connect() as conn:
     try:
         tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         if "users" not in tables:
-            conn.execute(text(
-                "CREATE TABLE users ("
-                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  email VARCHAR NOT NULL UNIQUE,"
-                "  display_name VARCHAR,"
-                "  is_active BOOLEAN NOT NULL DEFAULT 1,"
-                "  session_version INTEGER NOT NULL DEFAULT 0,"
-                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
-                ")"
-            ))
+            conn.execute(
+                text(
+                    "CREATE TABLE users ("
+                    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "  email VARCHAR NOT NULL UNIQUE,"
+                    "  display_name VARCHAR,"
+                    "  is_active BOOLEAN NOT NULL DEFAULT 1,"
+                    "  session_version INTEGER NOT NULL DEFAULT 0,"
+                    "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+                    ")"
+                )
+            )
             conn.execute(text("CREATE UNIQUE INDEX ix_users_email ON users (email)"))
             conn.commit()
             logger.info("migration: created users table")
         else:
             cols = {c[1] for c in conn.execute(text("PRAGMA table_info(users)")).fetchall()}
             if "session_version" not in cols:
-                conn.execute(text(
-                    "ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"
-                ))
+                conn.execute(text("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"))
                 conn.commit()
                 logger.info("migration: added users.session_version column")
     except Exception as e:
@@ -110,24 +110,28 @@ with engine.connect() as conn:
     try:
         tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         if "fact_overrides" not in tables:
-            conn.execute(text(
-                "CREATE TABLE fact_overrides ("
-                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  entity_type VARCHAR NOT NULL,"
-                "  entity_id INTEGER NOT NULL,"
-                "  field_name VARCHAR NOT NULL,"
-                "  old_value TEXT,"
-                "  new_value TEXT,"
-                "  user_id INTEGER REFERENCES users(id),"
-                "  user_display VARCHAR,"
-                "  reason TEXT,"
-                "  changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                ")"
-            ))
-            conn.execute(text(
-                "CREATE INDEX ix_fact_overrides_lookup "
-                "ON fact_overrides (entity_type, entity_id, field_name, changed_at)"
-            ))
+            conn.execute(
+                text(
+                    "CREATE TABLE fact_overrides ("
+                    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "  entity_type VARCHAR NOT NULL,"
+                    "  entity_id INTEGER NOT NULL,"
+                    "  field_name VARCHAR NOT NULL,"
+                    "  old_value TEXT,"
+                    "  new_value TEXT,"
+                    "  user_id INTEGER REFERENCES users(id),"
+                    "  user_display VARCHAR,"
+                    "  reason TEXT,"
+                    "  changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                    ")"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX ix_fact_overrides_lookup "
+                    "ON fact_overrides (entity_type, entity_id, field_name, changed_at)"
+                )
+            )
             conn.commit()
             logger.info("migration: created fact_overrides table")
     except Exception as e:
@@ -141,17 +145,19 @@ with engine.connect() as conn:
     try:
         tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         if "organizations" not in tables:
-            conn.execute(text(
-                "CREATE TABLE organizations ("
-                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  name VARCHAR NOT NULL,"
-                "  slug VARCHAR NOT NULL UNIQUE,"
-                "  stripe_customer_id VARCHAR,"
-                "  stripe_subscription_id VARCHAR,"
-                "  billing_status VARCHAR DEFAULT 'trialing',"
-                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
-                ")"
-            ))
+            conn.execute(
+                text(
+                    "CREATE TABLE organizations ("
+                    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "  name VARCHAR NOT NULL,"
+                    "  slug VARCHAR NOT NULL UNIQUE,"
+                    "  stripe_customer_id VARCHAR,"
+                    "  stripe_subscription_id VARCHAR,"
+                    "  billing_status VARCHAR DEFAULT 'trialing',"
+                    "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+                    ")"
+                )
+            )
             conn.execute(text("CREATE UNIQUE INDEX ix_organizations_slug ON organizations (slug)"))
             conn.commit()
             logger.info("migration: created organizations table")
@@ -162,16 +168,18 @@ with engine.connect() as conn:
     try:
         tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         if "org_memberships" not in tables:
-            conn.execute(text(
-                "CREATE TABLE org_memberships ("
-                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  user_id INTEGER NOT NULL REFERENCES users(id),"
-                "  org_id INTEGER NOT NULL REFERENCES organizations(id),"
-                "  role VARCHAR NOT NULL DEFAULT 'member',"
-                "  joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-                "  UNIQUE (user_id, org_id)"
-                ")"
-            ))
+            conn.execute(
+                text(
+                    "CREATE TABLE org_memberships ("
+                    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "  user_id INTEGER NOT NULL REFERENCES users(id),"
+                    "  org_id INTEGER NOT NULL REFERENCES organizations(id),"
+                    "  role VARCHAR NOT NULL DEFAULT 'member',"
+                    "  joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                    "  UNIQUE (user_id, org_id)"
+                    ")"
+                )
+            )
             conn.commit()
             logger.info("migration: created org_memberships table")
     except Exception as e:
@@ -181,30 +189,8 @@ with engine.connect() as conn:
     try:
         tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         if "project_access" not in tables:
-            conn.execute(text(
-                "CREATE TABLE project_access ("
-                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  user_id INTEGER NOT NULL REFERENCES users(id),"
-                "  project_id INTEGER NOT NULL REFERENCES projects(id),"
-                "  org_id INTEGER REFERENCES organizations(id),"
-                "  role VARCHAR NOT NULL DEFAULT 'viewer',"
-                "  granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-                "  granted_by INTEGER REFERENCES users(id),"
-                "  UNIQUE (user_id, project_id)"
-                ")"
-            ))
-            conn.commit()
-            logger.info("migration: created project_access table")
-        else:
-            # Rebuild if the legacy NOT NULL / DEFAULT 0 schema is present.
-            # SQLite can't ALTER a column's NOT NULL in place — recreate the table.
-            schema_row = conn.execute(text(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='project_access'"
-            )).fetchone()
-            schema_sql = (schema_row[0] if schema_row else "") or ""
-            if "NOT NULL DEFAULT 0" in schema_sql:
-                conn.execute(text("ALTER TABLE project_access RENAME TO project_access_old"))
-                conn.execute(text(
+            conn.execute(
+                text(
                     "CREATE TABLE project_access ("
                     "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
                     "  user_id INTEGER NOT NULL REFERENCES users(id),"
@@ -215,15 +201,43 @@ with engine.connect() as conn:
                     "  granted_by INTEGER REFERENCES users(id),"
                     "  UNIQUE (user_id, project_id)"
                     ")"
-                ))
+                )
+            )
+            conn.commit()
+            logger.info("migration: created project_access table")
+        else:
+            # Rebuild if the legacy NOT NULL / DEFAULT 0 schema is present.
+            # SQLite can't ALTER a column's NOT NULL in place — recreate the table.
+            schema_row = conn.execute(
+                text("SELECT sql FROM sqlite_master WHERE type='table' AND name='project_access'")
+            ).fetchone()
+            schema_sql = (schema_row[0] if schema_row else "") or ""
+            if "NOT NULL DEFAULT 0" in schema_sql:
+                conn.execute(text("ALTER TABLE project_access RENAME TO project_access_old"))
+                conn.execute(
+                    text(
+                        "CREATE TABLE project_access ("
+                        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                        "  user_id INTEGER NOT NULL REFERENCES users(id),"
+                        "  project_id INTEGER NOT NULL REFERENCES projects(id),"
+                        "  org_id INTEGER REFERENCES organizations(id),"
+                        "  role VARCHAR NOT NULL DEFAULT 'viewer',"
+                        "  granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                        "  granted_by INTEGER REFERENCES users(id),"
+                        "  UNIQUE (user_id, project_id)"
+                        ")"
+                    )
+                )
                 # Convert legacy sentinel 0 to NULL during the copy.
-                conn.execute(text(
-                    "INSERT INTO project_access (id, user_id, project_id, org_id, role, granted_at, granted_by) "
-                    "SELECT id, user_id, project_id, "
-                    "       CASE WHEN org_id = 0 THEN NULL ELSE org_id END, "
-                    "       role, granted_at, granted_by "
-                    "FROM project_access_old"
-                ))
+                conn.execute(
+                    text(
+                        "INSERT INTO project_access (id, user_id, project_id, org_id, role, granted_at, granted_by) "
+                        "SELECT id, user_id, project_id, "
+                        "       CASE WHEN org_id = 0 THEN NULL ELSE org_id END, "
+                        "       role, granted_at, granted_by "
+                        "FROM project_access_old"
+                    )
+                )
                 conn.execute(text("DROP TABLE project_access_old"))
                 conn.commit()
                 logger.info("migration: rebuilt project_access with nullable org_id")
@@ -234,21 +248,23 @@ with engine.connect() as conn:
     try:
         tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         if "org_invites" not in tables:
-            conn.execute(text(
-                "CREATE TABLE org_invites ("
-                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  org_id INTEGER NOT NULL REFERENCES organizations(id),"
-                "  invited_email VARCHAR NOT NULL,"
-                "  role VARCHAR NOT NULL DEFAULT 'member',"
-                "  project_id INTEGER REFERENCES projects(id),"
-                "  project_role VARCHAR,"
-                "  token VARCHAR NOT NULL UNIQUE,"
-                "  invited_by INTEGER NOT NULL REFERENCES users(id),"
-                "  accepted_at DATETIME,"
-                "  expires_at DATETIME NOT NULL,"
-                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
-                ")"
-            ))
+            conn.execute(
+                text(
+                    "CREATE TABLE org_invites ("
+                    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "  org_id INTEGER NOT NULL REFERENCES organizations(id),"
+                    "  invited_email VARCHAR NOT NULL,"
+                    "  role VARCHAR NOT NULL DEFAULT 'member',"
+                    "  project_id INTEGER REFERENCES projects(id),"
+                    "  project_role VARCHAR,"
+                    "  token VARCHAR NOT NULL UNIQUE,"
+                    "  invited_by INTEGER NOT NULL REFERENCES users(id),"
+                    "  accepted_at DATETIME,"
+                    "  expires_at DATETIME NOT NULL,"
+                    "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+                    ")"
+                )
+            )
             conn.execute(text("CREATE UNIQUE INDEX ix_org_invites_token ON org_invites (token)"))
             conn.execute(text("CREATE INDEX ix_org_invites_email ON org_invites (invited_email)"))
             conn.commit()
@@ -351,14 +367,18 @@ app.include_router(override_router)
 app.include_router(org_router)
 app.include_router(billing_router)
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 
 @app.get("/")
 def root():
     return {"message": "Section API v0.1.0"}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
