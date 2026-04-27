@@ -131,6 +131,43 @@ Document:
 """
 
 
+def _ocr_pdf_text(path: Path) -> str:
+    # OCR fallback for scanned/image-only PDFs. Renders each page with pypdfium2
+    # and runs Tesseract via pytesseract. Requires the Tesseract binary on PATH
+    # (TESSERACT_CMD env var overrides). Disable entirely with ENABLE_OCR=0.
+    if os.getenv("ENABLE_OCR", "1") == "0":
+        return ""
+    try:
+        import pypdfium2 as pdfium
+        import pytesseract
+        from PIL import Image  # noqa: F401  (ensures Pillow present)
+    except ImportError:
+        return ""
+
+    tesseract_cmd = os.getenv("TESSERACT_CMD")
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+    dpi = int(os.getenv("OCR_DPI", "200"))
+    scale = dpi / 72.0
+    max_pages = int(os.getenv("OCR_MAX_PAGES", "50"))
+
+    pages_out = []
+    pdf = pdfium.PdfDocument(str(path))
+    try:
+        for i, page in enumerate(pdf):
+            if i >= max_pages:
+                break
+            pil_image = page.render(scale=scale).to_pil()
+            try:
+                pages_out.append(pytesseract.image_to_string(pil_image) or "")
+            finally:
+                pil_image.close()
+    finally:
+        pdf.close()
+    return "\n".join(pages_out).strip()
+
+
 def extract_pdf_text(path: Path) -> str:
     try:
         from pypdf import PdfReader
@@ -159,6 +196,16 @@ def extract_pdf_text(path: Path) -> str:
         meaningful_text = "".join(c for c in pages_text if not c.isspace())
         if meaningful_text:
             parts.append("DOCUMENT TEXT:\n" + pages_text)
+
+        # Scanned PDF: no embedded text and no AcroForm. Fall back to OCR.
+        if not parts and not fields:
+            try:
+                ocr_text = _ocr_pdf_text(path)
+            except Exception as e:
+                return f"[PDF extraction failed: OCR error: {e}]"
+            if ocr_text:
+                parts.append("DOCUMENT TEXT (OCR):\n" + ocr_text)
+
         return "\n\n".join(parts) if parts else ""
     except Exception as e:
         return f"[PDF extraction failed: {e}]"

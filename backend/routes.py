@@ -133,6 +133,7 @@ async def upload_document(
     project_id: int,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    force: bool = False,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -151,7 +152,7 @@ async def upload_document(
         Document.project_id == project_id,
         Document.content_hash == content_hash,
     ).first()
-    if existing:
+    if existing and not force:
         return {
             "id": existing.id,
             "s3_key": existing.s3_key,
@@ -159,6 +160,26 @@ async def upload_document(
             "status": "duplicate",
             "extraction_status": existing.extraction_status,
             "message": "This file already exists in the project",
+        }
+
+    if existing and force:
+        # Re-ingest the same file: overwrite bytes on disk and re-run extraction.
+        # Keeps the document id stable so any references in extracted entities survive.
+        existing_path = UPLOAD_DIR / existing.s3_key
+        existing_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_path.write_bytes(contents)
+        existing.ocr_status = "pending"
+        existing.extraction_status = "queued"
+        db.commit()
+        db.refresh(existing)
+        background_tasks.add_task(_run_extraction, existing.id, str(existing_path))
+        return {
+            "id": existing.id,
+            "s3_key": existing.s3_key,
+            "filename": safe_name,
+            "status": "queued",
+            "extraction_status": "queued",
+            "reprocessed": True,
         }
 
     project_dir = UPLOAD_DIR / str(project_id)
@@ -210,6 +231,59 @@ def get_document_file(
         media_type=doc.mime or "application/octet-stream",
         filename=filename,
     )
+
+
+@router.get("/documents/{document_id}/contributions")
+def get_document_contributions(
+    document_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    require_project_role(db, user, doc.project_id, "viewer")
+
+    instruments = (
+        db.query(Instrument)
+        .filter(Instrument.source_document_id == document_id)
+        .order_by(Instrument.id)
+        .all()
+    )
+    instrument_ids = [i.id for i in instruments]
+
+    obligations = []
+    if instrument_ids:
+        obligations = (
+            db.query(Obligation)
+            .filter(Obligation.instrument_id.in_(instrument_ids))
+            .order_by(Obligation.id)
+            .all()
+        )
+
+    return {
+        "document_id": document_id,
+        "extraction_status": doc.extraction_status,
+        "instruments": [
+            {
+                "id": i.id,
+                "type": i.type,
+                "recorded_at": i.recorded_at.isoformat() if i.recorded_at else None,
+                "extracted_data": i.extracted_data or {},
+            }
+            for i in instruments
+        ],
+        "obligations": [
+            {
+                "id": o.id,
+                "instrument_id": o.instrument_id,
+                "type": o.type,
+                "due_date": o.due_date.isoformat() if o.due_date else None,
+                "params": o.params or {},
+            }
+            for o in obligations
+        ],
+    }
 
 
 @router.get("/projects/{project_id}/documents")

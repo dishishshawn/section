@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Libre_Franklin } from "next/font/google";
 import "./globals.css";
-import "./axios-defaults";
+import AxiosInit from "./components/AxiosInit";
 
 const fraunces = Fraunces({
   variable: "--font-fraunces",
@@ -31,7 +31,10 @@ export default function RootLayout({
       lang="en"
       className={`${fraunces.variable} ${franklin.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-paper text-ink">{children}</body>
+      <body className="min-h-full flex flex-col bg-paper text-ink">
+        <AxiosInit />
+        {children}
+      </body>
     </html>
   );
 }

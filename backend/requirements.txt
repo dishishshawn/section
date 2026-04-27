@@ -10,6 +10,9 @@ aiosqlite==0.20.0
 reportlab==4.1.1
 python-multipart==0.0.7
 pypdf==6.10.2
+pypdfium2==4.30.0
+pytesseract==0.3.13
+Pillow>=11.1.0
 itsdangerous==2.2.0
 resend==2.10.0
 stripe==12.1.0

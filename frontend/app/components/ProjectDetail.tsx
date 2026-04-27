@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Runsheet from "./Runsheet";
+import type { SearchTarget } from "./GlobalSearch";
 import OwnershipView from "./OwnershipView";
 import ObligationCalendar from "./ObligationCalendar";
 import RiskDashboard from "./RiskDashboard";
@@ -19,12 +20,21 @@ interface ProjectDetailProps {
   jurisdiction: string;
   orgId: number | null;
   yourRole: string;
+  searchTarget?: SearchTarget;
   onBack: () => void;
 }
 
-export default function ProjectDetail({ projectId, projectName, jurisdiction, orgId, yourRole, onBack }: ProjectDetailProps) {
-  const [currentView, setCurrentView] = useState<ViewType>("documents");
+export default function ProjectDetail({ projectId, projectName, jurisdiction, orgId, yourRole, searchTarget, onBack }: ProjectDetailProps) {
+  const [currentView, setCurrentView] = useState<ViewType>(searchTarget?.view ?? "documents");
   const [auditOpen, setAuditOpen] = useState(false);
+  const [highlight, setHighlight] = useState<string | null>(searchTarget?.highlight ?? null);
+
+  useEffect(() => {
+    if (searchTarget) {
+      setCurrentView(searchTarget.view);
+      setHighlight(searchTarget.highlight);
+    }
+  }, [searchTarget]);
 
   const views: { id: ViewType; label: string }[] = [
     { id: "documents", label: "Documents" },
@@ -59,10 +69,6 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction, or
               </h1>
               <div className="mt-3 flex items-center flex-wrap gap-x-5 gap-y-1 text-sm text-ink-2">
                 <span className="font-serif-italic">{jurisdiction}</span>
-                <span className="text-line-strong">·</span>
-                <span className="tabular text-ink-3">
-                  No. {String(projectId).padStart(4, "0")}
-                </span>
               </div>
             </div>
           </div>
@@ -84,7 +90,10 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction, or
                 return (
                   <button
                     key={view.id}
-                    onClick={() => setCurrentView(view.id)}
+                    onClick={() => {
+                      setCurrentView(view.id);
+                      setHighlight(null);
+                    }}
                     className={`relative px-5 py-4 text-[0.95rem] transition-colors ${
                       active
                         ? "text-ink font-medium"
@@ -114,8 +123,8 @@ export default function ProjectDetail({ projectId, projectName, jurisdiction, or
       </div>
 
       <main className="max-w-6xl mx-auto">
-        {currentView === "documents" && <DocumentUpload projectId={projectId} />}
-        {currentView === "runsheet" && <Runsheet projectId={projectId} />}
+        {currentView === "documents" && <DocumentUpload projectId={projectId} highlight={highlight} />}
+        {currentView === "runsheet" && <Runsheet projectId={projectId} highlight={highlight} />}
         {currentView === "ownership" && <OwnershipView projectId={projectId} />}
         {currentView === "calendar" && <ObligationCalendar projectId={projectId} />}
         {currentView === "map" && <TractMap projectId={projectId} />}

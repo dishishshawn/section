@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import SourceBadge, { ReviewedBadge, ReviewMeta, SourceRef } from "./SourceBadge";
 import EditableFact from "./EditableFact";
@@ -37,10 +37,30 @@ const STATUS = {
   missing: { label: "Incomplete", class: "text-rust", italics: true },
 } as const;
 
-export default function Runsheet({ projectId }: { projectId: number }) {
+export default function Runsheet({ projectId, highlight }: { projectId: number; highlight?: string | null }) {
   const [data, setData] = useState<RunsheetData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const rowRefs = useRef<Record<number, HTMLLIElement | null>>({});
+  const [flashIdx, setFlashIdx] = useState<number | null>(null);
+
+  const matchIdx = (() => {
+    if (!highlight || !data?.chain?.length) return -1;
+    const needle = highlight.toLowerCase();
+    return data.chain.findIndex(
+      (c) => c.grantor?.toLowerCase().includes(needle) || c.grantee?.toLowerCase().includes(needle)
+    );
+  })();
+
+  useEffect(() => {
+    if (matchIdx < 0) return;
+    const el = rowRefs.current[matchIdx];
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashIdx(matchIdx);
+    const t = setTimeout(() => setFlashIdx(null), 2200);
+    return () => clearTimeout(t);
+  }, [matchIdx, data]);
 
   const fetchRunsheet = async () => {
     try {
@@ -92,7 +112,10 @@ export default function Runsheet({ projectId }: { projectId: number }) {
                 return (
                   <li
                     key={idx}
-                    className="grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 items-baseline py-5 border-b border-line last:border-b-0 group"
+                    ref={(el) => { rowRefs.current[idx] = el; }}
+                    className={`grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 items-baseline py-5 border-b border-line last:border-b-0 group transition-colors duration-700 ${
+                      flashIdx === idx ? "bg-accent-tint" : ""
+                    }`}
                   >
                     {/* Entry number */}
                     <div className="text-right">

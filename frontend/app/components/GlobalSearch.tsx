@@ -12,10 +12,16 @@ interface SearchResults {
 
 const EMPTY: SearchResults = { projects: [], documents: [], parties: [], tracts: [] };
 
+export type SearchTarget =
+  | { view: "runsheet"; highlight: string }
+  | { view: "documents"; highlight: string }
+  | { view: "map"; highlight: string }
+  | null;
+
 export default function GlobalSearch({
   onOpenProject,
 }: {
-  onOpenProject: (projectId: number) => void;
+  onOpenProject: (projectId: number, target?: SearchTarget) => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults>(EMPTY);
@@ -73,10 +79,10 @@ export default function GlobalSearch({
     results.parties.length +
     results.tracts.length;
 
-  const pick = (projectId: number) => {
+  const pick = (projectId: number, target?: SearchTarget) => {
     setOpen(false);
     setQuery("");
-    onOpenProject(projectId);
+    onOpenProject(projectId, target ?? null);
   };
 
   return (
@@ -131,7 +137,7 @@ export default function GlobalSearch({
               {results.parties.map((p, i) => (
                 <ResultRow
                   key={`party-${p.project_id}-${i}`}
-                  onClick={() => pick(p.project_id)}
+                  onClick={() => pick(p.project_id, { view: "runsheet", highlight: p.name })}
                   primary={p.name}
                   secondary={p.project_name}
                 />
@@ -144,7 +150,7 @@ export default function GlobalSearch({
               {results.tracts.map((t, i) => (
                 <ResultRow
                   key={`tract-${t.project_id}-${i}`}
-                  onClick={() => pick(t.project_id)}
+                  onClick={() => pick(t.project_id, { view: "map", highlight: t.legal_description })}
                   primary={t.legal_description}
                   secondary={t.project_name}
                 />
@@ -157,7 +163,7 @@ export default function GlobalSearch({
               {results.documents.map((d) => (
                 <ResultRow
                   key={`doc-${d.id}`}
-                  onClick={() => pick(d.project_id)}
+                  onClick={() => pick(d.project_id, { view: "documents", highlight: d.filename })}
                   primary={d.filename}
                   secondary={d.project_name}
                 />

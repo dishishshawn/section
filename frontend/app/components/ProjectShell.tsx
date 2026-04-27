@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import ProjectDetail from "./ProjectDetail";
-import GlobalSearch from "./GlobalSearch";
+import GlobalSearch, { SearchTarget } from "./GlobalSearch";
 import OrgSwitcher from "./OrgSwitcher";
 import MembersPage from "./MembersPage";
 import EmptyState from "./EmptyState";
@@ -43,6 +43,7 @@ export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectJurisdiction, setNewProjectJurisdiction] = useState("Oklahoma");
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [searchTarget, setSearchTarget] = useState<SearchTarget>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [currentOrg, setCurrentOrg] = useState<Org | null>(null);
@@ -148,7 +149,11 @@ export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
           jurisdiction={selected.jurisdiction}
           orgId={currentOrg?.id ?? null}
           yourRole={selected.your_role ?? "viewer"}
-          onBack={() => setSelectedProjectId(null)}
+          searchTarget={searchTarget}
+          onBack={() => {
+            setSelectedProjectId(null);
+            setSearchTarget(null);
+          }}
         />
       );
     }
@@ -216,7 +221,12 @@ export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
           </p>
 
           <div className="mt-8">
-            <GlobalSearch onOpenProject={(id) => setSelectedProjectId(id)} />
+            <GlobalSearch
+              onOpenProject={(id, target) => {
+                setSearchTarget(target ?? null);
+                setSelectedProjectId(id);
+              }}
+            />
           </div>
         </div>
       </header>
