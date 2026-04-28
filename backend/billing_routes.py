@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
-from database import get_db
+from database import engine, get_db
 from models import Organization, OrgMembership, StripeWebhookEvent, User
 from permissions import require_org_role
 
@@ -158,7 +158,8 @@ async def stripe_webhook(
     event_type = event["type"]
     data = event["data"]["object"]
 
-    # --- Idempotency: dedupe by event_id -----------------------------------
+    # Cheap pre-check so already-processed retries short-circuit without
+    # taking a write lock. The atomic ledger insert below is the real guard.
     if event_id:
         existing = (
             db.query(StripeWebhookEvent)
@@ -168,22 +169,21 @@ async def stripe_webhook(
         if existing:
             return {"received": True, "duplicate": True}
 
-        # Insert BEFORE processing so a concurrent retry cannot reprocess.
+    # Ledger insert + side effect must commit atomically. If processing fails
+    # mid-flight, the ledger row rolls back so Stripe's retry reprocesses.
+    # On Postgres SERIALIZABLE detects any concurrent overlap; on SQLite the
+    # WAL writer lock plus the unique index on event_id achieves the same.
+    if engine.dialect.name == "postgresql":
+        db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+
+    if event_id:
         payload_hash = hashlib.sha256(payload or b"").hexdigest()
-        ledger = StripeWebhookEvent(
+        db.add(StripeWebhookEvent(
             event_id=event_id,
             event_type=event_type,
             payload_hash=payload_hash,
-        )
-        db.add(ledger)
-        try:
-            db.commit()
-        except IntegrityError:
-            # Race: another worker inserted the same event_id concurrently.
-            db.rollback()
-            return {"received": True, "duplicate": True}
+        ))
 
-    # --- Dispatch ---------------------------------------------------------
     if event_type in (
         "customer.subscription.created",
         "customer.subscription.updated",
@@ -192,17 +192,22 @@ async def stripe_webhook(
         if org:
             org.stripe_subscription_id = data.get("id")
             org.billing_status = data.get("status")
-            # Backfill customer id if we learned it from this event.
             if not org.stripe_customer_id and data.get("customer"):
                 org.stripe_customer_id = data["customer"]
-            db.commit()
 
     elif event_type == "customer.subscription.deleted":
         org = _resolve_org_from_event(db, data)
         if org:
             org.stripe_subscription_id = None
             org.billing_status = "canceled"
-            db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrent delivery won the unique-index race; the winner applied
+        # the side effect, so this delivery is a no-op duplicate.
+        db.rollback()
+        return {"received": True, "duplicate": True}
 
     return {"received": True}
 

@@ -240,3 +240,156 @@ def test_reconcile_seats_admin_only(authenticated_client, seed):
     assert body["seat_count"] == 4
     # No STRIPE_SECRET_KEY configured in this test → not pushed.
     assert body["pushed_to_stripe"] is False
+
+
+def test_concurrent_delivery_loses_unique_race(client, seed, monkeypatch, db):
+    """Simulates the race window where two workers both pass the pre-check
+    and race to INSERT. The loser hits the unique constraint, must roll back,
+    and must NOT silently apply the side effect a second time.
+    """
+    import billing_routes
+    import models
+
+    _install_fake_stripe(
+        monkeypatch,
+        construct_event_returns={
+            "id": "evt_race_1",
+            "type": "customer.subscription.updated",
+            "data": {
+                "object": {
+                    "id": "sub_LOSER",
+                    "status": "past_due",
+                    "metadata": {"org_id": str(seed["org_a"].id)},
+                }
+            },
+        },
+    )
+
+    # Stage the race: a competing worker inserts the ledger row + applies its
+    # own side effect AFTER our request passed the pre-check. We do that by
+    # hooking into _resolve_org_from_event, which runs after the ledger row
+    # has been queued in the session but before commit.
+    real_resolve = billing_routes._resolve_org_from_event
+
+    def competing_writer(db_, data):
+        # Pretend a parallel worker already won: persist the ledger row and
+        # the canonical side effect via a separate session on the same engine.
+        other = type(db_)(bind=db_.bind)
+        try:
+            other.add(models.StripeWebhookEvent(
+                event_id="evt_race_1",
+                event_type="customer.subscription.updated",
+                payload_hash="winner",
+            ))
+            org = other.query(models.Organization).filter_by(
+                id=seed["org_a"].id
+            ).first()
+            org.stripe_subscription_id = "sub_WINNER"
+            org.billing_status = "active"
+            other.commit()
+        finally:
+            other.close()
+        return real_resolve(db_, data)
+
+    monkeypatch.setattr(billing_routes, "_resolve_org_from_event", competing_writer)
+
+    r = client.post(
+        "/api/billing/webhook",
+        headers={"stripe-signature": "sig_ok"},
+        content=b"{}",
+    )
+    # Loser sees IntegrityError on the ledger and reports duplicate.
+    assert r.status_code == 200
+    assert r.json() == {"received": True, "duplicate": True}
+
+    db.expire_all()
+    ledger = (
+        db.query(models.StripeWebhookEvent)
+        .filter_by(event_id="evt_race_1")
+        .all()
+    )
+    # Exactly one ledger row — the winner's. The loser's was rolled back.
+    assert len(ledger) == 1
+    assert ledger[0].payload_hash == "winner"
+
+    # Side effect reflects ONLY the winner; the loser did not overwrite it.
+    org = db.query(models.Organization).filter_by(id=seed["org_a"].id).first()
+    assert org.stripe_subscription_id == "sub_WINNER"
+    assert org.billing_status == "active"
+
+
+def test_side_effect_failure_rolls_back_ledger(client, seed, monkeypatch, db):
+    """If side-effect commit fails, ledger row is rolled back so Stripe's
+    retry can reprocess instead of being silently swallowed as a duplicate.
+    """
+    import billing_routes
+    import models
+
+    _install_fake_stripe(
+        monkeypatch,
+        construct_event_returns={
+            "id": "evt_rollback_1",
+            "type": "customer.subscription.updated",
+            "data": {
+                "object": {
+                    "id": "sub_BOOM",
+                    "status": "active",
+                    "metadata": {"org_id": str(seed["org_a"].id)},
+                }
+            },
+        },
+    )
+
+    # First delivery: force the side-effect path to explode after the ledger
+    # row has been added to the session but before commit.
+    calls = {"n": 0}
+
+    real_resolve = billing_routes._resolve_org_from_event
+
+    def boom(db_, data):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("simulated downstream failure")
+        return real_resolve(db_, data)
+
+    monkeypatch.setattr(billing_routes, "_resolve_org_from_event", boom)
+
+    import pytest
+
+    # TestClient re-raises unhandled server errors; that's fine for our
+    # purposes — we only care that the DB state is consistent afterward.
+    with pytest.raises(RuntimeError, match="simulated downstream failure"):
+        client.post(
+            "/api/billing/webhook",
+            headers={"stripe-signature": "sig_ok"},
+            content=b"{}",
+        )
+
+    db.expire_all()
+    ledger = (
+        db.query(models.StripeWebhookEvent)
+        .filter_by(event_id="evt_rollback_1")
+        .all()
+    )
+    # Atomic rollback: ledger insert undone alongside the failed side effect.
+    assert len(ledger) == 0
+
+    # Stripe retries the same event_id → processed cleanly this time.
+    r2 = client.post(
+        "/api/billing/webhook",
+        headers={"stripe-signature": "sig_ok"},
+        content=b"{}",
+    )
+    assert r2.status_code == 200
+    assert r2.json() == {"received": True}
+
+    db.expire_all()
+    org = db.query(models.Organization).filter_by(id=seed["org_a"].id).first()
+    assert org.stripe_subscription_id == "sub_BOOM"
+    assert org.billing_status == "active"
+    ledger = (
+        db.query(models.StripeWebhookEvent)
+        .filter_by(event_id="evt_rollback_1")
+        .all()
+    )
+    assert len(ledger) == 1
