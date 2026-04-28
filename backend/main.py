@@ -11,7 +11,7 @@ from override_routes import router as override_router
 from org_routes import router as org_router
 from billing_routes import router as billing_router
 from logging_config import setup_logging, get_logger
-from middleware import RequestIDMiddleware
+from middleware import HTTPSEnforcementMiddleware, RequestIDMiddleware
 
 load_dotenv()
 
@@ -285,6 +285,26 @@ _env_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") i
 ALLOWED_ORIGINS = _env_origins or ["http://localhost:3000", "http://localhost:8000"]
 if IS_PRODUCTION and not _env_origins:
     raise RuntimeError("ALLOWED_ORIGINS must be set in production (comma-separated list).")
+
+if IS_PRODUCTION:
+    # Belt-and-suspenders: even with the redirect middleware below, refuse to
+    # boot if production config still references plain-HTTP endpoints. Catches
+    # misconfigured envs (e.g. ENV=production but APP_URL=http://staging) at
+    # startup rather than after a user has been served an insecure cookie.
+    _bad_origins = [o for o in ALLOWED_ORIGINS if o.startswith("http://")]
+    if _bad_origins:
+        raise RuntimeError(
+            f"ALLOWED_ORIGINS must use https in production: {_bad_origins}"
+        )
+    _app_url = os.getenv("APP_URL", "")
+    if _app_url and _app_url.startswith("http://"):
+        raise RuntimeError(
+            "APP_URL must use https in production (got plain http)."
+        )
+
+# 301 plain HTTP to HTTPS and emit HSTS in production. Honors
+# X-Forwarded-Proto so this works behind TLS-terminating proxies.
+app.add_middleware(HTTPSEnforcementMiddleware, enabled=IS_PRODUCTION)
 
 app.add_middleware(
     CORSMiddleware,
