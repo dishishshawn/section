@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -15,12 +15,39 @@ from auth import (
 )
 from database import get_db
 from models import User
-from rate_limit import client_ip, enforce_rate_limit
+from rate_limit import client_ip, enforce_rate_limit, peek_count, record_event
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 SESSION_COOKIE = "section_session"
 _dev_mode = not os.getenv("RESEND_API_KEY")
+
+# Per-IP soft lock: after this many failed verify attempts within the window,
+# the IP is rejected for the remainder of the window. Sized so a casual user
+# fat-fingering their code several times stays well under, but a brute-force
+# rotating emails from one IP trips quickly relative to the 10^6 code space.
+AUTH_IP_FAIL_THRESHOLD = 10
+AUTH_IP_FAIL_WINDOW_SECONDS = 3600
+
+
+def _enforce_ip_soft_lock(db, ip: str) -> None:
+    """Reject when an IP has accumulated too many recent verify failures.
+
+    Defense against an attacker rotating emails from one IP — the per-email
+    bucket stays cold but the per-IP failure counter ticks up across all
+    targets and trips this lock.
+    """
+    fails = peek_count(
+        db,
+        key=f"auth:fail:ip:{ip}",
+        window_seconds=AUTH_IP_FAIL_WINDOW_SECONDS,
+    )
+    if fails >= AUTH_IP_FAIL_THRESHOLD:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed sign-in attempts from this network. Try again later.",
+            headers={"Retry-After": str(AUTH_IP_FAIL_WINDOW_SECONDS)},
+        )
 
 
 class RequestCodeBody(BaseModel):
@@ -63,12 +90,23 @@ def request_code(
     caller can't tell whether an address is on the allowlist.
     """
     email = _normalize_email(body.email)
+    ip = client_ip(request)
+    _enforce_ip_soft_lock(db, ip)
     enforce_rate_limit(
         db,
-        key=f"auth:request-code:ip:{client_ip(request)}",
+        key=f"auth:request-code:ip:{ip}",
         max_count=10,
         window_seconds=60,
         detail="Too many sign-in attempts from this network. Try again in a minute.",
+    )
+    # Cross-email cap: an attacker rotating addresses from one IP can stay
+    # under the 10/min burst for an hour; this 30/hour cap closes that gap.
+    enforce_rate_limit(
+        db,
+        key=f"auth:request-code:ip-hourly:{ip}",
+        max_count=30,
+        window_seconds=3600,
+        detail="Too many sign-in attempts from this network. Try again later.",
     )
     enforce_rate_limit(
         db,
@@ -99,15 +137,35 @@ def verify_code(
     db: Session = Depends(get_db),
 ):
     email = _normalize_email(body.email)
+    ip = client_ip(request)
+    _enforce_ip_soft_lock(db, ip)
     # Per-IP cap on verify too — defends the 10^6 space across multiple emails.
     enforce_rate_limit(
         db,
-        key=f"auth:verify-code:ip:{client_ip(request)}",
+        key=f"auth:verify-code:ip:{ip}",
         max_count=20,
         window_seconds=60,
         detail="Too many code attempts. Try again in a minute.",
     )
-    consume_code(db, email, body.code)
+    enforce_rate_limit(
+        db,
+        key=f"auth:verify-code:ip-hourly:{ip}",
+        max_count=50,
+        window_seconds=3600,
+        detail="Too many code attempts from this network. Try again later.",
+    )
+    try:
+        consume_code(db, email, body.code)
+    except HTTPException as exc:
+        # Bad/expired code: tick the per-IP failure counter so cross-email
+        # brute force from a single IP eventually trips the soft lock.
+        if exc.status_code == 400:
+            record_event(
+                db,
+                key=f"auth:fail:ip:{ip}",
+                window_seconds=AUTH_IP_FAIL_WINDOW_SECONDS,
+            )
+        raise
 
     user = db.query(User).filter(User.email == email).first()
     if not user:

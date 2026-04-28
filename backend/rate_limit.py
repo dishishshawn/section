@@ -103,6 +103,36 @@ def check_rate_limit(
     return True, 0
 
 
+def peek_count(db: Session, key: str, window_seconds: int) -> int:
+    """Read the current bucket count without mutating it.
+
+    Returns 0 when the bucket is missing or its window has expired. Useful
+    for soft-lock checks that should reject independently of incrementing
+    the counter that drove the lock.
+    """
+    row = db.execute(
+        text("SELECT count, window_start FROM rate_limit_buckets WHERE key = :k"),
+        {"k": key},
+    ).fetchone()
+    if row is None:
+        return 0
+    count, window_start = row[0], row[1]
+    if _now() - window_start >= window_seconds:
+        return 0
+    return int(count)
+
+
+def record_event(db: Session, key: str, window_seconds: int) -> None:
+    """Increment a bucket without enforcing any cap.
+
+    For tracking signals (e.g. failed auth attempts) where the threshold is
+    evaluated separately. Reuses ``check_rate_limit`` with an unreachable
+    ``max_count`` so the bucket lifecycle (window resets, atomic increment)
+    is shared with the enforcement path.
+    """
+    check_rate_limit(db, key, max_count=10**9, window_seconds=window_seconds)
+
+
 def enforce_rate_limit(
     db: Session,
     key: str,
