@@ -318,12 +318,22 @@ if IS_PRODUCTION:
 # X-Forwarded-Proto so this works behind TLS-terminating proxies.
 app.add_middleware(HTTPSEnforcementMiddleware, enabled=IS_PRODUCTION)
 
+# Explicit allowlists — wildcards combined with allow_credentials=True are a
+# footgun (some browsers reject, and any future header/method is auto-allowed).
+# Methods cover every verb actually mounted by our routers (no PUT in use).
+# Headers cover what a browser legitimately sends with our JSON / multipart
+# uploads plus the inbound request-id for tracing. expose_headers lets the
+# frontend read the echoed X-Request-ID for log correlation. max_age caches
+# preflights for 10 minutes — long enough to avoid an OPTIONS storm, short
+# enough that policy changes propagate quickly.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
+    max_age=600,
 )
 
 # CSRF defense: for state-changing methods authenticated via the session cookie,
