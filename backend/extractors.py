@@ -582,7 +582,7 @@ def _sanitize_field(value: Optional[str]) -> Optional[str]:
 
     match = _LABEL_BOUNDARY_RE.search(cleaned)
     if match:
-        cleaned = cleaned[:match.start()].rstrip(" ,;-")
+        cleaned = cleaned[: match.start()].rstrip(" ,;-")
 
     bare = cleaned.rstrip(":").strip()
     if not bare:

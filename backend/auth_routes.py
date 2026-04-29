@@ -20,7 +20,11 @@ from rate_limit import client_ip, enforce_rate_limit, peek_count, record_event
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 SESSION_COOKIE = "section_session"
-_dev_mode = not os.getenv("RESEND_API_KEY")
+
+
+def _is_dev_mode() -> bool:
+    return not os.getenv("RESEND_API_KEY")
+
 
 # Per-IP soft lock: after this many failed verify attempts within the window,
 # the IP is rejected for the remainder of the window. Sized so a casual user
@@ -124,7 +128,7 @@ def request_code(
 
     code = issue_code(db, email)
     send_verification_code(email, code)
-    if _dev_mode and not IS_PRODUCTION:
+    if _is_dev_mode() and not IS_PRODUCTION:
         return RequestCodeResponse(dev_code=code)
     return RequestCodeResponse()
 

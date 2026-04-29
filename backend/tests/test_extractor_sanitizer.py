@@ -30,10 +30,7 @@ def test_label_prefix_drops_value():
 def test_field_bleed_truncates_at_label_boundary():
     # Real bug from tx-glo-lease-1063833.pdf: lessor names followed by next form field.
     bled = "Herd , John Tevis , John Jason Sullivan and C. Boyd Finch Leaso Date: 6/24/2009 Ut J"
-    assert (
-        _sanitize_field(bled)
-        == "Herd , John Tevis , John Jason Sullivan and C. Boyd Finch"
-    )
+    assert _sanitize_field(bled) == "Herd , John Tevis , John Jason Sullivan and C. Boyd Finch"
     assert _sanitize_field("John Smith  Lease Date: 6/24/2009") == "John Smith"
     assert _sanitize_field("Smith Original Lessee: EOG") == "Smith"
 
@@ -44,10 +41,7 @@ def test_real_values_preserved():
         _sanitize_field("Commissioner of the General Land Office of the State of Texas")
         == "Commissioner of the General Land Office of the State of Texas"
     )
-    assert (
-        _sanitize_field("PIONEER NATURAL RESOURCES USA, INC.")
-        == "PIONEER NATURAL RESOURCES USA, INC."
-    )
+    assert _sanitize_field("PIONEER NATURAL RESOURCES USA, INC.") == "PIONEER NATURAL RESOURCES USA, INC."
 
 
 def test_legal_descriptions_not_clobbered():

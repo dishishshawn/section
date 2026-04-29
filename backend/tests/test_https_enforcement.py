@@ -3,6 +3,7 @@
 Tested in isolation against a small ad-hoc FastAPI app so we don't have to
 re-import main.py with a mutated ENV (the import has heavy side effects).
 """
+
 from __future__ import annotations
 
 from fastapi import FastAPI

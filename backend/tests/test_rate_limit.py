@@ -125,9 +125,7 @@ def test_verify_failures_softlock_ip_across_emails(client, db, monkeypatch):
     assert r.status_code == 429
 
 
-def test_successful_verify_does_not_increment_fail_counter(
-    client, db, monkeypatch
-):
+def test_successful_verify_does_not_increment_fail_counter(client, db, monkeypatch):
     """A correct code on the first try must not tick the IP failure bucket
     (otherwise legitimate users would soft-lock themselves over time).
     """

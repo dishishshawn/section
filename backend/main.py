@@ -309,14 +309,10 @@ if IS_PRODUCTION:
     # startup rather than after a user has been served an insecure cookie.
     _bad_origins = [o for o in ALLOWED_ORIGINS if o.startswith("http://")]
     if _bad_origins:
-        raise RuntimeError(
-            f"ALLOWED_ORIGINS must use https in production: {_bad_origins}"
-        )
+        raise RuntimeError(f"ALLOWED_ORIGINS must use https in production: {_bad_origins}")
     _app_url = os.getenv("APP_URL", "")
     if _app_url and _app_url.startswith("http://"):
-        raise RuntimeError(
-            "APP_URL must use https in production (got plain http)."
-        )
+        raise RuntimeError("APP_URL must use https in production (got plain http).")
 
 # 301 plain HTTP to HTTPS and emit HSTS in production. Honors
 # X-Forwarded-Proto so this works behind TLS-terminating proxies.

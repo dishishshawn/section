@@ -160,11 +160,13 @@ async def stripe_webhook(
 
     if event_id:
         payload_hash = hashlib.sha256(payload or b"").hexdigest()
-        db.add(StripeWebhookEvent(
-            event_id=event_id,
-            event_type=event_type,
-            payload_hash=payload_hash,
-        ))
+        db.add(
+            StripeWebhookEvent(
+                event_id=event_id,
+                event_type=event_type,
+                payload_hash=payload_hash,
+            )
+        )
 
     if event_type in (
         "customer.subscription.created",

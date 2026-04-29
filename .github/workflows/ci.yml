@@ -13,7 +13,6 @@ jobs:
       SECRET_KEY: test-secret-do-not-use-in-prod
       STRIPE_API_KEY: sk_test_dummy
       STRIPE_WEBHOOK_SECRET: whsec_dummy
-      RESEND_API_KEY: re_dummy
       ANTHROPIC_API_KEY: sk-ant-dummy
     steps:
       - uses: actions/checkout@v4

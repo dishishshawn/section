@@ -268,14 +268,14 @@ def test_concurrent_delivery_loses_unique_race(client, seed, monkeypatch, db):
         # the canonical side effect via a separate session on the same engine.
         other = type(db_)(bind=db_.bind)
         try:
-            other.add(models.StripeWebhookEvent(
-                event_id="evt_race_1",
-                event_type="customer.subscription.updated",
-                payload_hash="winner",
-            ))
-            org = other.query(models.Organization).filter_by(
-                id=seed["org_a"].id
-            ).first()
+            other.add(
+                models.StripeWebhookEvent(
+                    event_id="evt_race_1",
+                    event_type="customer.subscription.updated",
+                    payload_hash="winner",
+                )
+            )
+            org = other.query(models.Organization).filter_by(id=seed["org_a"].id).first()
             org.stripe_subscription_id = "sub_WINNER"
             org.billing_status = "active"
             other.commit()
@@ -295,11 +295,7 @@ def test_concurrent_delivery_loses_unique_race(client, seed, monkeypatch, db):
     assert r.json() == {"received": True, "duplicate": True}
 
     db.expire_all()
-    ledger = (
-        db.query(models.StripeWebhookEvent)
-        .filter_by(event_id="evt_race_1")
-        .all()
-    )
+    ledger = db.query(models.StripeWebhookEvent).filter_by(event_id="evt_race_1").all()
     # Exactly one ledger row — the winner's. The loser's was rolled back.
     assert len(ledger) == 1
     assert ledger[0].payload_hash == "winner"
@@ -358,11 +354,7 @@ def test_side_effect_failure_rolls_back_ledger(client, seed, monkeypatch, db):
         )
 
     db.expire_all()
-    ledger = (
-        db.query(models.StripeWebhookEvent)
-        .filter_by(event_id="evt_rollback_1")
-        .all()
-    )
+    ledger = db.query(models.StripeWebhookEvent).filter_by(event_id="evt_rollback_1").all()
     # Atomic rollback: ledger insert undone alongside the failed side effect.
     assert len(ledger) == 0
 
@@ -379,9 +371,5 @@ def test_side_effect_failure_rolls_back_ledger(client, seed, monkeypatch, db):
     org = db.query(models.Organization).filter_by(id=seed["org_a"].id).first()
     assert org.stripe_subscription_id == "sub_BOOM"
     assert org.billing_status == "active"
-    ledger = (
-        db.query(models.StripeWebhookEvent)
-        .filter_by(event_id="evt_rollback_1")
-        .all()
-    )
+    ledger = db.query(models.StripeWebhookEvent).filter_by(event_id="evt_rollback_1").all()
     assert len(ledger) == 1
