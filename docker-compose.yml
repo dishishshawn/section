@@ -1,6 +1,16 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -25,13 +35,33 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://section:section_dev_pwd@postgres:5432/section_dev
+      REDIS_URL: redis://redis:6379/0
       PYTHONUNBUFFERED: 1
     depends_on:
+      redis:
+        condition: service_healthy
       postgres:
         condition: service_healthy
     volumes:
       - ./backend:/app
     command: python main.py
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://section:section_dev_pwd@postgres:5432/section_dev
+      REDIS_URL: redis://redis:6379/0
+      PYTHONUNBUFFERED: 1
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: rq worker extraction --url redis://redis:6379/0
 
 volumes:
   postgres_data:

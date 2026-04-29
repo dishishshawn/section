@@ -35,6 +35,7 @@ except ImportError:
 
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_INPUT_CHAR_LIMIT = int(os.getenv("CLAUDE_INPUT_CHAR_LIMIT", "20000"))
 
 
 class LeaseExtraction(BaseModel):
@@ -354,21 +355,144 @@ _OCR_LENIENCE_NOTE = (
 )
 
 
-def _call_claude(prompt: str, text: str) -> Optional[dict]:
+def _page_count_from_text(text: str) -> Optional[int]:
+    pages = [int(m.group(1)) for m in re.finditer(r"\[PAGE\s+(\d+)\]", text or "")]
+    return max(pages) if pages else None
+
+
+def _split_page_segments(text: str) -> tuple[str, list[tuple[int, str]]]:
+    page_matches = list(re.finditer(r"\[PAGE\s+(\d+)\]", text or ""))
+    if not page_matches:
+        return "", []
+
+    prefix = text[: page_matches[0].start()].strip()
+    segments = []
+    for idx, match in enumerate(page_matches):
+        start = match.start()
+        end = page_matches[idx + 1].start() if idx + 1 < len(page_matches) else len(text)
+        segments.append((int(match.group(1)), text[start:end].strip()))
+    return prefix, segments
+
+
+def _split_long_page_segment(prefix: str, page_number: int, segment: str) -> list[str]:
+    marker = f"[PAGE {page_number}]"
+    body = segment[len(marker) :].lstrip() if segment.startswith(marker) else segment
+    header = f"{prefix}\n\n{marker}\n" if prefix else f"{marker}\n"
+    max_body = max(CLAUDE_INPUT_CHAR_LIMIT - len(header), 1)
+    return [header + body[i : i + max_body] for i in range(0, len(body), max_body)]
+
+
+def _chunk_text_by_page(text: str) -> tuple[list[str], bool]:
+    """
+    Split long extracted text on [PAGE N] boundaries.
+
+    Returns (chunks, used_page_chunking). If there are no page markers, the
+    caller must use the explicit truncation fallback.
+    """
+    if len(text or "") <= CLAUDE_INPUT_CHAR_LIMIT:
+        return [text], False
+
+    prefix, page_segments = _split_page_segments(text)
+    if not page_segments:
+        return [text[:CLAUDE_INPUT_CHAR_LIMIT]], False
+
+    chunks: list[str] = []
+    current = prefix
+    for page_number, segment in page_segments:
+        candidate = f"{current}\n\n{segment}" if current else segment
+        if len(candidate) <= CLAUDE_INPUT_CHAR_LIMIT:
+            current = candidate
+            continue
+
+        if current and current != prefix:
+            chunks.append(current)
+            current = prefix
+
+        candidate = f"{current}\n\n{segment}" if current else segment
+        if len(candidate) <= CLAUDE_INPUT_CHAR_LIMIT:
+            current = candidate
+            continue
+
+        if current and current != prefix:
+            chunks.append(current)
+        chunks.extend(_split_long_page_segment(prefix, page_number, segment))
+        current = prefix
+
+    if current and current != prefix:
+        chunks.append(current)
+
+    return chunks, True
+
+
+def claude_truncation_warning(text: str, document_id: int | None = None, page_count: int | None = None) -> str | None:
+    if len(text or "") <= CLAUDE_INPUT_CHAR_LIMIT:
+        return None
+    return (
+        f"Claude extraction input truncated "
+        f"(document_id={document_id}, page_count={page_count}, "
+        f"chars={len(text)}, limit={CLAUDE_INPUT_CHAR_LIMIT})"
+    )
+
+
+def claude_chunking_notice(text: str, chunk_count: int, document_id: int | None = None) -> str:
+    return (
+        f"Claude extraction input chunked by page (document_id={document_id}, chunks={chunk_count}, chars={len(text)})"
+    )
+
+
+def _merge_extraction_dicts(parts: list[dict]) -> dict:
+    merged: dict = {}
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        for key, value in part.items():
+            if value in (None, "", [], {}):
+                continue
+            if key in ("source_quotes", "source_pages") and isinstance(value, dict):
+                existing = merged.setdefault(key, {})
+                for field, field_value in value.items():
+                    if field_value not in (None, "") and field not in existing:
+                        existing[field] = field_value
+                continue
+            if isinstance(value, list):
+                existing = merged.setdefault(key, [])
+                for item in value:
+                    if item not in existing:
+                        existing.append(item)
+                continue
+            merged.setdefault(key, value)
+    return merged
+
+
+def _call_claude_once(
+    prompt: str,
+    text: str,
+    document_id: int | None = None,
+    page_count: int | None = None,
+    chunk_label: str | None = None,
+) -> Optional[dict]:
     client = _get_client()
     if client is None:
         _log("Claude client not configured (ANTHROPIC_API_KEY missing/placeholder)")
         return None
     is_ocr = "DOCUMENT TEXT (OCR):" in text[:200]
     effective_prompt = prompt + (_OCR_LENIENCE_NOTE if is_ocr else "")
+    warning = claude_truncation_warning(text, document_id, page_count)
+    if warning:
+        _log(warning)
+    claude_text = text[:CLAUDE_INPUT_CHAR_LIMIT]
     try:
-        _log(f"calling Claude model={CLAUDE_MODEL} base={os.getenv('ANTHROPIC_BASE_URL') or 'default'} ocr={is_ocr}")
+        chunk_info = f" chunk={chunk_label}" if chunk_label else ""
+        _log(
+            f"calling Claude model={CLAUDE_MODEL} base={os.getenv('ANTHROPIC_BASE_URL') or 'default'} "
+            f"ocr={is_ocr}{chunk_info}"
+        )
         response = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=2000,
             system="You are a JSON-only extraction tool. Respond with ONLY a valid JSON object. No prose, no markdown fences, no explanations.",
             messages=[
-                {"role": "user", "content": effective_prompt + text[:20000]},
+                {"role": "user", "content": effective_prompt + claude_text},
                 {"role": "assistant", "content": "{"},
             ],
         )
@@ -382,6 +506,31 @@ def _call_claude(prompt: str, text: str) -> Optional[dict]:
     except Exception as e:
         _log(f"Claude call failed: {type(e).__name__}: {e}")
     return None
+
+
+def _call_claude(
+    prompt: str, text: str, document_id: int | None = None, page_count: int | None = None
+) -> Optional[dict]:
+    chunks, used_page_chunking = _chunk_text_by_page(text)
+    if not used_page_chunking:
+        return _call_claude_once(prompt, chunks[0], document_id=document_id, page_count=page_count)
+
+    _log(claude_chunking_notice(text, len(chunks), document_id))
+    parsed_chunks = []
+    for idx, chunk in enumerate(chunks, start=1):
+        parsed = _call_claude_once(
+            prompt,
+            chunk,
+            document_id=document_id,
+            page_count=page_count,
+            chunk_label=f"{idx}/{len(chunks)}",
+        )
+        if parsed:
+            parsed_chunks.append(parsed)
+
+    if not parsed_chunks:
+        return None
+    return _merge_extraction_dicts(parsed_chunks)
 
 
 # Form labels that the model sometimes returns verbatim (as a value) or that
@@ -543,8 +692,8 @@ def _regex_deed_fallback(text: str) -> DeedExtraction:
     )
 
 
-def extract_lease(text: str) -> LeaseExtraction:
-    data = _call_claude(LEASE_PROMPT, text)
+def extract_lease(text: str, document_id: int | None = None, page_count: int | None = None) -> LeaseExtraction:
+    data = _call_claude(LEASE_PROMPT, text, document_id=document_id, page_count=page_count)
     if data:
         lease = LeaseExtraction(**{k: v for k, v in data.items() if k in LeaseExtraction.model_fields})
     else:
@@ -552,8 +701,8 @@ def extract_lease(text: str) -> LeaseExtraction:
     return _sanitize_lease(lease)
 
 
-def extract_deed(text: str) -> DeedExtraction:
-    data = _call_claude(DEED_PROMPT, text)
+def extract_deed(text: str, document_id: int | None = None, page_count: int | None = None) -> DeedExtraction:
+    data = _call_claude(DEED_PROMPT, text, document_id=document_id, page_count=page_count)
     if data:
         deed = DeedExtraction(**{k: v for k, v in data.items() if k in DeedExtraction.model_fields})
     else:
@@ -799,8 +948,8 @@ Document:
 """
 
 
-def extract_assignment(text: str) -> DeedExtraction:
-    data = _call_claude(ASSIGNMENT_PROMPT, text)
+def extract_assignment(text: str, document_id: int | None = None, page_count: int | None = None) -> DeedExtraction:
+    data = _call_claude(ASSIGNMENT_PROMPT, text, document_id=document_id, page_count=page_count)
     if data:
         assignment = DeedExtraction(**{k: v for k, v in data.items() if k in DeedExtraction.model_fields})
     else:
@@ -851,22 +1000,31 @@ def process_document(db: Session, document: Document, file_path: Path) -> dict:
         return {"status": "failed", "reason": "no_text"}
 
     doc_type = classify_document(file_path.name, text)
+    page_count = _page_count_from_text(text)
+    _, used_page_chunking = _chunk_text_by_page(text)
+    warning = None if used_page_chunking else claude_truncation_warning(text, document.id, page_count)
+    if warning:
+        _log(warning)
+        document.extraction_warning = warning
+    else:
+        document.extraction_warning = None
+    document.page_count = page_count
     document.ocr_status = "complete"
     document.extraction_status = "in_progress"
     db.commit()
 
     try:
         if doc_type == "lease":
-            lease = extract_lease(text)
+            lease = extract_lease(text, document_id=document.id, page_count=page_count)
             materialize_lease(db, document.project_id, document.id, lease)
         elif doc_type == "deed":
-            deed = extract_deed(text)
+            deed = extract_deed(text, document_id=document.id, page_count=page_count)
             materialize_deed(db, document.project_id, document.id, deed)
         elif doc_type == "assignment":
-            assignment = extract_assignment(text)
+            assignment = extract_assignment(text, document_id=document.id, page_count=page_count)
             materialize_assignment(db, document.project_id, document.id, assignment)
         else:
-            deed = extract_deed(text)
+            deed = extract_deed(text, document_id=document.id, page_count=page_count)
             materialize_deed(db, document.project_id, document.id, deed)
 
         document.extraction_status = "complete"

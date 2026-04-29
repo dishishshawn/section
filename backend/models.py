@@ -34,6 +34,10 @@ class Document(Base):
     content_hash = Column(String, nullable=True, index=True)
     ocr_status = Column(String, default="pending")
     extraction_status = Column(String, default="pending")
+    extraction_job_id = Column(String, nullable=True, index=True)
+    extraction_error = Column(Text, nullable=True)
+    extraction_warning = Column(Text, nullable=True)
+    extraction_attempts = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="documents")

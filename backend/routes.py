@@ -1,19 +1,18 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from pathlib import Path
 import hashlib
 import uuid
 import os
 from datetime import datetime
-from database import get_db, SessionLocal
+from database import get_db
 from models import Project, Document, Tract, Party, Instrument, Interest, Obligation, OrgMembership, ProjectAccess, User
 from pydantic import BaseModel
 from exports import OwnershipReportGenerator, RunsheetGenerator, TitleOpinionGenerator, StipulationsGenerator
-from extractors import process_document
-from facts import resolved_data, get_provenance
+from facts import resolved_data, resolved_data_many
+from jobs import ExtractionQueueUnavailable, enqueue_extraction, queue_status
 from str_parser import parse_legal_description, parsed_to_dict, section_grid_position
 from auth import get_current_user
 from permissions import (
@@ -139,22 +138,31 @@ def list_projects(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _run_extraction(document_id: int, file_path_str: str):
-    db = SessionLocal()
+def _enqueue_extraction_or_503(db: Session, doc: Document, file_path: Path) -> None:
     try:
-        doc = db.query(Document).filter(Document.id == document_id).first()
-        if doc:
-            process_document(db, doc, Path(file_path_str))
+        job_id = enqueue_extraction(doc.id, file_path)
+    except ExtractionQueueUnavailable as e:
+        doc.extraction_status = "queue_failed"
+        doc.extraction_error = str(e)
+        db.commit()
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        print(f"[extraction worker] document {document_id} failed: {e}")
-    finally:
-        db.close()
+        doc.extraction_status = "queue_failed"
+        doc.extraction_error = f"Unable to enqueue extraction: {e}"
+        db.commit()
+        raise HTTPException(status_code=503, detail="Unable to enqueue extraction job")
+
+    doc.extraction_status = "queued"
+    doc.extraction_job_id = job_id
+    doc.extraction_error = None
+    doc.extraction_warning = None
+    doc.extraction_attempts = 0
+    db.commit()
 
 
 @router.post("/projects/{project_id}/documents")
 async def upload_document(
     project_id: int,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     force: bool = False,
     db: Session = Depends(get_db),
@@ -197,15 +205,21 @@ async def upload_document(
         existing_path.write_bytes(contents)
         existing.ocr_status = "pending"
         existing.extraction_status = "queued"
+        existing.extraction_job_id = None
+        existing.extraction_error = None
+        existing.extraction_warning = None
+        existing.extraction_attempts = 0
         db.commit()
         db.refresh(existing)
-        background_tasks.add_task(_run_extraction, existing.id, str(existing_path))
+        _enqueue_extraction_or_503(db, existing, existing_path)
+        db.refresh(existing)
         return {
             "id": existing.id,
             "s3_key": existing.s3_key,
             "filename": safe_name,
             "status": "queued",
             "extraction_status": "queued",
+            "extraction_job_id": existing.extraction_job_id,
             "reprocessed": True,
         }
 
@@ -222,12 +236,15 @@ async def upload_document(
         content_hash=content_hash,
         ocr_status="pending",
         extraction_status="queued",
+        extraction_error=None,
+        extraction_warning=None,
     )
     db.add(doc)
     db.commit()
     db.refresh(doc)
 
-    background_tasks.add_task(_run_extraction, doc.id, str(file_path))
+    _enqueue_extraction_or_503(db, doc, file_path)
+    db.refresh(doc)
 
     return {
         "id": doc.id,
@@ -235,6 +252,7 @@ async def upload_document(
         "filename": safe_name,
         "status": "queued",
         "extraction_status": "queued",
+        "extraction_job_id": doc.extraction_job_id,
     }
 
 
@@ -259,6 +277,29 @@ def get_document_file(
         media_type=doc.mime or "application/octet-stream",
         filename=filename,
     )
+
+
+@router.get("/documents/{document_id}/extraction")
+def get_document_extraction_status(
+    document_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    require_project_role(db, user, doc.project_id, "viewer")
+
+    return {
+        "document_id": doc.id,
+        "ocr_status": doc.ocr_status,
+        "extraction_status": doc.extraction_status,
+        "extraction_job_id": doc.extraction_job_id,
+        "extraction_attempts": doc.extraction_attempts or 0,
+        "extraction_error": doc.extraction_error,
+        "extraction_warning": doc.extraction_warning,
+        **queue_status(doc.extraction_job_id),
+    }
 
 
 @router.get("/documents/{document_id}/contributions")
@@ -324,6 +365,10 @@ def list_documents(
             "mime": d.mime,
             "ocr_status": d.ocr_status,
             "extraction_status": d.extraction_status,
+            "extraction_job_id": d.extraction_job_id,
+            "extraction_attempts": d.extraction_attempts or 0,
+            "extraction_error": d.extraction_error,
+            "extraction_warning": d.extraction_warning,
             "created_at": d.created_at.isoformat() if d.created_at else None,
         }
         for d in docs
@@ -342,10 +387,22 @@ def extract_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    doc.extraction_status = "in_progress"
+    file_path = UPLOAD_DIR / doc.s3_key
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File missing on disk")
+
+    doc.ocr_status = "pending"
+    doc.extraction_status = "queued"
+    doc.extraction_job_id = None
+    doc.extraction_error = None
+    doc.extraction_warning = None
+    doc.extraction_attempts = 0
     db.commit()
 
-    return {"status": "extraction_started", "document_id": document_id}
+    _enqueue_extraction_or_503(db, doc, file_path)
+    db.refresh(doc)
+
+    return {"status": "queued", "document_id": document_id, "extraction_job_id": doc.extraction_job_id}
 
 
 @router.get("/projects/{project_id}/ownership")
@@ -360,7 +417,9 @@ def get_ownership(
         raise HTTPException(status_code=404, detail="Project not found")
 
     tracts = db.query(Tract).filter(Tract.project_id == project_id).all()
-    interests = db.query(Interest).join(Tract).filter(Tract.project_id == project_id).all()
+    interests = (
+        db.query(Interest).join(Tract).options(joinedload(Interest.party)).filter(Tract.project_id == project_id).all()
+    )
     lease_count = (
         db.query(Instrument)
         .filter(
@@ -373,11 +432,41 @@ def get_ownership(
     total_acres = sum(t.gross_acres or 0 for t in tracts)
     leased_acres = total_acres if lease_count > 0 else 0
 
-    # Build an index of party name → instrument(s) that mention them, for source tracing
+    # Build an index of party name → instrument(s) that mention them, for source tracing.
     project_instruments = db.query(Instrument).filter(Instrument.project_id == project_id).all()
+    fact_requests = [
+        ("instrument", inst.id, inst.extracted_data if isinstance(inst.extracted_data, dict) else {})
+        for inst in project_instruments
+    ]
+    fact_requests.extend(
+        (
+            "interest",
+            i.id,
+            {
+                "fraction_numerator": str(i.fraction_numerator),
+                "fraction_denominator": str(i.fraction_denominator),
+                "mineral_estate": i.mineral_estate or "Unknown",
+            },
+        )
+        for i in interests
+    )
+    fact_requests.extend(
+        ("party", i.party.id, {"name": i.party.name, "type": i.party.type}) for i in interests if i.party
+    )
+    resolved = resolved_data_many(db, fact_requests)
+
+    source_doc_ids = {inst.source_document_id for inst in project_instruments if inst.source_document_id}
+    source_docs = (
+        {doc.id: doc for doc in db.query(Document).filter(Document.id.in_(source_doc_ids)).all()}
+        if source_doc_ids
+        else {}
+    )
+
     party_to_instrument: dict[str, Instrument] = {}
     for inst in project_instruments:
-        grantor, grantee = _instrument_parties(inst, db)
+        grantor, grantee = _instrument_parties_from_data(
+            resolved.get(("instrument", inst.id), inst.extracted_data if isinstance(inst.extracted_data, dict) else {})
+        )
         for name in (grantor, grantee):
             if name and name not in party_to_instrument:
                 party_to_instrument[name] = inst
@@ -391,30 +480,28 @@ def get_ownership(
         # Resolve party name through overrides
         party = i.party
         raw_party_name = party.name if party else "Unknown"
-        party_resolved = resolved_data(db, "party", party.id, {"name": party.name, "type": party.type}) if party else {}
+        party_resolved = resolved.get(("party", party.id), {}) if party else {}
         party_name = party_resolved.get("name") or raw_party_name
         party_reviewed = party_resolved.get("_reviewed_fields") or {}
 
         # Resolve interest fields through overrides
-        interest_base = {
-            "fraction_numerator": str(i.fraction_numerator),
-            "fraction_denominator": str(i.fraction_denominator),
-            "mineral_estate": i.mineral_estate or "Unknown",
-        }
-        interest_resolved = resolved_data(db, "interest", i.id, interest_base)
+        interest_resolved = resolved.get(("interest", i.id), {})
         interest_reviewed = interest_resolved.get("_reviewed_fields") or {}
         mineral_estate = interest_resolved.get("mineral_estate") or "Unknown"
 
         source_inst = party_to_instrument.get(raw_party_name) or party_to_instrument.get(party_name)
         field = None
         if source_inst:
-            data = resolved_data(db, "instrument", source_inst.id, source_inst.extracted_data)
-            grantor, grantee = _instrument_parties(source_inst, db)
-            if party_name == grantor:
+            data = resolved.get(
+                ("instrument", source_inst.id),
+                source_inst.extracted_data if isinstance(source_inst.extracted_data, dict) else {},
+            )
+            grantor, grantee = _instrument_parties_from_data(data)
+            if party_name == grantor or raw_party_name == grantor:
                 field = "grantor" if "grantor" in (data.get("source_quotes") or {}) else "lessor"
             else:
                 field = "grantee" if "grantee" in (data.get("source_quotes") or {}) else "lessee"
-        source = _source_for_instrument(source_inst, db, field) if source_inst else None
+        source = _source_for_instrument_from_docs(source_inst, source_docs, field) if source_inst else None
 
         owners.append(
             {
@@ -490,11 +577,37 @@ def get_obligations(
     return {"project_id": project_id, "obligations": items}
 
 
-def _instrument_parties(inst: Instrument, db: Session) -> tuple[str, str]:
-    data = resolved_data(db, "instrument", inst.id, inst.extracted_data)
+def _instrument_parties_from_data(data: dict) -> tuple[str, str]:
+    data = data if isinstance(data, dict) else {}
     grantor = data.get("grantor") or data.get("lessor") or ""
     grantee = data.get("grantee") or data.get("lessee") or ""
     return grantor, grantee
+
+
+def _instrument_parties(inst: Instrument, db: Session) -> tuple[str, str]:
+    data = resolved_data(db, "instrument", inst.id, inst.extracted_data)
+    return _instrument_parties_from_data(data)
+
+
+def _source_for_instrument_from_docs(
+    inst: Instrument,
+    documents_by_id: dict[int, Document],
+    field: str = None,
+) -> Optional[dict]:
+    if not inst or not inst.source_document_id:
+        return None
+    doc = documents_by_id.get(inst.source_document_id)
+    if not doc:
+        return None
+    filename = doc.s3_key.split("_", 1)[-1] if "_" in (doc.s3_key or "") else (doc.s3_key or "")
+    data = inst.extracted_data if isinstance(inst.extracted_data, dict) else {}
+    quotes = data.get("source_quotes") or {}
+    quote = quotes.get(field) if field else None
+    return {
+        "document_id": doc.id,
+        "filename": filename,
+        "quote": quote,
+    }
 
 
 def _source_for_instrument(inst: Instrument, db: Session, field: str = None) -> Optional[dict]:
