@@ -147,6 +147,12 @@ Each should return the record you added. Allow up to 48 hours for global propaga
 
 ---
 
+## Billing (currently disabled)
+
+Per-seat Stripe billing is wired end-to-end on the backend (`backend/billing_routes.py`: Checkout, webhook with idempotent ledger, billing status, seat reconcile) but is **intentionally inactive** while the app is used free-of-charge by our partner company during the feedback phase. With `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET` unset, `/api/billing/checkout` and `/api/billing/webhook` return 501 and the `billing_status` badge in `MembersPage.tsx` stays hidden. Note: no frontend Checkout button exists yet — that needs to be built when billing is turned on.
+
+---
+
 ## Running the Demo
 
 1. Start Postgres: `docker-compose up -d`
