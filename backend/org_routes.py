@@ -20,7 +20,12 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
 from rate_limit import client_ip, enforce_rate_limit
-from permissions import require_org_role, require_project_role
+from permissions import (
+    ORG_ROLE_RANK,
+    PROJECT_ROLE_RANK,
+    require_org_role,
+    require_project_role,
+)
 from models import (
     OrgInvite,
     OrgMembership,
@@ -37,9 +42,6 @@ INVITE_TTL_HOURS = 72
 # ---------------------------------------------------------------------------
 # Role helpers
 # ---------------------------------------------------------------------------
-
-ORG_ROLE_RANK = {"owner": 3, "admin": 2, "member": 1}
-PROJECT_ROLE_RANK = {"owner": 3, "editor": 2, "viewer": 1}
 
 
 def _org_membership(db: Session, user: User, org_id: int) -> OrgMembership | None:
