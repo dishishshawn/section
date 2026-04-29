@@ -28,8 +28,11 @@ pip install -r requirements.txt
 cd ../frontend
 npm install
 
-# Start Postgres (from project root)
-docker-compose up -d
+# Start Postgres + Redis + RQ worker (from project root)
+docker-compose up -d postgres redis worker
+
+# Backend running on host (not in Compose) needs the host-port broker URL
+export REDIS_URL=redis://localhost:6379/0  # PowerShell: $env:REDIS_URL="redis://localhost:6379/0"
 
 # In backend venv, seed demo data
 python backend/demo_seed.py
@@ -42,6 +45,8 @@ npm run dev  # runs on localhost:3000
 ```
 
 Then visit http://localhost:3000 in your browser.
+
+> **Extraction queue**: production requires the RQ worker + Redis to be reachable; uploads return 503 if the broker is down. In dev (no `ENV=production`), if Redis is unreachable the backend falls back to inline extraction so uploads still complete — slower, single-request, fine for local work.
 
 ## Architecture
 

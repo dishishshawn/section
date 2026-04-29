@@ -12,9 +12,10 @@ from models import Project, Document, Tract, Party, Instrument, Interest, Obliga
 from pydantic import BaseModel
 from exports import OwnershipReportGenerator, RunsheetGenerator, TitleOpinionGenerator, StipulationsGenerator
 from facts import resolved_data, resolved_data_many
-from jobs import ExtractionQueueUnavailable, enqueue_extraction, queue_status
+from jobs import ExtractionQueueUnavailable, enqueue_extraction, perform_extraction_job, queue_status
 from str_parser import parse_legal_description, parsed_to_dict, section_grid_position
-from auth import get_current_user
+from auth import IS_PRODUCTION, get_current_user
+from logging_config import get_logger
 from permissions import (
     ORG_ROLE_RANK,
     effective_project_role,
@@ -24,6 +25,8 @@ from permissions import (
 
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+logger = get_logger("section.routes")
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -142,6 +145,24 @@ def _enqueue_extraction_or_503(db: Session, doc: Document, file_path: Path) -> N
     try:
         job_id = enqueue_extraction(doc.id, file_path)
     except ExtractionQueueUnavailable as e:
+        if not IS_PRODUCTION:
+            # Dev fallback: no broker reachable, run extraction inline so a
+            # fresh laptop without docker-compose isn't a hard upload failure.
+            # perform_extraction_job opens its own SessionLocal and writes
+            # final status (including "failed: <exc>") on its own commit, so
+            # the request-scoped session just needs to refresh to see it.
+            logger.warning(
+                "extraction queue unavailable, running inline (dev fallback)",
+                extra={"document_id": doc.id, "error": str(e)},
+            )
+            try:
+                perform_extraction_job(doc.id, str(file_path))
+            except Exception:
+                # Inline job already persisted "failed: <exc>" on its own
+                # session; UI surfaces that via /api/documents/{id}/extraction.
+                pass
+            db.refresh(doc)
+            return
         doc.extraction_status = "queue_failed"
         doc.extraction_error = str(e)
         db.commit()

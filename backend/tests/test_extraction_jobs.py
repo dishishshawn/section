@@ -30,6 +30,46 @@ def test_upload_enqueues_extraction_job(authenticated_client, seed, monkeypatch)
     assert seen["file_path"].exists()
 
 
+def test_upload_falls_back_to_inline_extraction_when_queue_down(authenticated_client, seed, monkeypatch):
+    def boom(*a, **kw):
+        raise routes.ExtractionQueueUnavailable("redis down")
+
+    spy = {"called": False}
+
+    def fake_inline(doc_id, path):
+        spy["called"] = True
+        return {"status": "complete", "document_id": doc_id}
+
+    monkeypatch.setattr(routes, "enqueue_extraction", boom)
+    monkeypatch.setattr(routes, "perform_extraction_job", fake_inline)
+    monkeypatch.setattr(routes, "IS_PRODUCTION", False)
+
+    c = authenticated_client(seed["editor"])
+    r = c.post(
+        f"/api/projects/{seed['project'].id}/documents",
+        files={"file": ("lease.txt", b"Oil and gas lease", "text/plain")},
+    )
+
+    assert r.status_code == 200
+    assert spy["called"] is True
+
+
+def test_upload_503s_in_production_when_queue_down(authenticated_client, seed, monkeypatch):
+    def boom(*a, **kw):
+        raise routes.ExtractionQueueUnavailable("redis down")
+
+    monkeypatch.setattr(routes, "enqueue_extraction", boom)
+    monkeypatch.setattr(routes, "IS_PRODUCTION", True)
+
+    c = authenticated_client(seed["editor"])
+    r = c.post(
+        f"/api/projects/{seed['project'].id}/documents",
+        files={"file": ("lease.txt", b"Oil and gas lease", "text/plain")},
+    )
+
+    assert r.status_code == 503
+
+
 def test_document_extraction_status_includes_queue_and_qa_fields(authenticated_client, seed, db, monkeypatch):
     doc = models.Document(
         project_id=seed["project"].id,
