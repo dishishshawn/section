@@ -232,3 +232,27 @@ button:disabled,
 ::-webkit-scrollbar-thumb:hover {
   background: var(--ink-3);
 }
+
+/* Indeterminate progress bar — used for in-flight Claude extractions where
+   we don't have a real percent. The stripe sweeps across a fixed track to
+   communicate "still working" without overclaiming progress. */
+@keyframes section-extract-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+.section-progress-track {
+  position: relative;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  background: var(--line);
+}
+.section-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  animation: section-extract-sweep 1.6s ease-in-out infinite;
+}

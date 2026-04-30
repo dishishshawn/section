@@ -11,7 +11,14 @@ interface Document {
   mime: string;
   ocr_status: string;
   extraction_status: string;
+  extraction_model: string | null;
   created_at: string | null;
+}
+
+interface ModelOption {
+  id: string;
+  label: string;
+  tier: string;
 }
 
 interface UploadProgress {
@@ -35,6 +42,21 @@ function statusLabel(status: string): string {
   if (status.startsWith("skipped")) return "Skipped";
   if (status.startsWith("failed")) return "No text";
   return status.replace(/_/g, " ");
+}
+
+// Treat pending/queued/in_progress as "still working" — these get an
+// indeterminate progress bar in the document row.
+function isExtractionInFlight(status: string): boolean {
+  if (!status) return true; // newly inserted rows show as "pending"
+  return status === "pending" || status === "queued" || status === "in_progress";
+}
+
+// Caption shown alongside the progress bar so the user knows which stage
+// of the pipeline a row is in.
+function inFlightCaption(status: string): string {
+  if (status === "in_progress") return "Extracting…";
+  if (status === "queued") return "Queued";
+  return "Pending";
 }
 
 function statusTitle(status: string): string {
@@ -72,6 +94,10 @@ export default function DocumentUpload({ projectId, onExtractionComplete, highli
   const [contribData, setContribData] = useState<any | null>(null);
   const [contribLoading, setContribLoading] = useState(false);
   const [contribError, setContribError] = useState<string | null>(null);
+  // Empty string = "use server default" — sent as no `model` param.
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [defaultModel, setDefaultModel] = useState<string>("");
 
   const openContributions = async (doc: Document) => {
     setContribDoc(doc);
@@ -115,6 +141,23 @@ export default function DocumentUpload({ projectId, onExtractionComplete, highli
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    axios
+      .get(`${API_URL}/extraction/models`, { withCredentials: true })
+      .then((r) => {
+        if (cancelled) return;
+        setModelOptions(r.data?.models || []);
+        setDefaultModel(r.data?.default_model || "");
+      })
+      .catch(() => {
+        // Non-fatal — without the list the dropdown just hides itself.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const fetchDocuments = async () => {
     try {
@@ -160,7 +203,11 @@ export default function DocumentUpload({ projectId, onExtractionComplete, highli
       const formData = new FormData();
       const bareName = file.name.split(/[\\/]/).pop() || file.name;
       formData.append("file", file, bareName);
-      const url = `${API_URL}/projects/${projectId}/documents${force ? "?force=true" : ""}`;
+      const params = new URLSearchParams();
+      if (force) params.set("force", "true");
+      if (selectedModel) params.set("model", selectedModel);
+      const qs = params.toString();
+      const url = `${API_URL}/projects/${projectId}/documents${qs ? `?${qs}` : ""}`;
       const res = await axios.post(url, formData, { withCredentials: true });
       return { ok: true, duplicate: res.data?.status === "duplicate" };
     } catch (err: any) {
@@ -276,14 +323,34 @@ export default function DocumentUpload({ projectId, onExtractionComplete, highli
 
   return (
     <div className="px-10 py-12">
-      <div className="mb-8">
-        <div className="eyebrow mb-2">Section I</div>
-        <h2 className="font-display text-[2.4rem] font-medium leading-none text-ink tracking-tight">
-          Documents
-        </h2>
-        <p className="mt-3 font-serif-italic text-ink-2 text-[1.02rem] max-w-2xl">
-          Drop recorded instruments here. Every upload is extracted, cited, and filed.
-        </p>
+      <div className="mb-8 flex items-end justify-between gap-6">
+        <div>
+          <div className="eyebrow mb-2">Section I</div>
+          <h2 className="font-display text-[2.4rem] font-medium leading-none text-ink tracking-tight">
+            Documents
+          </h2>
+          <p className="mt-3 font-serif-italic text-ink-2 text-[1.02rem] max-w-2xl">
+            Drop recorded instruments here. Every upload is extracted, cited, and filed.
+          </p>
+        </div>
+        {modelOptions.length > 0 && (
+          <label className="flex flex-col gap-1 text-right">
+            <span className="eyebrow">Extraction model</span>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="border border-line-strong bg-surface px-3 py-2 text-sm font-serif-italic text-ink hover:border-accent transition-colors"
+              title={`Server default: ${defaultModel || "(unset)"}`}
+            >
+              <option value="">Server default ({defaultModel || "—"})</option>
+              {modelOptions.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label} · {m.tier}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       {/* Drop zone — a proper "file drawer" feel */}
@@ -402,13 +469,24 @@ export default function DocumentUpload({ projectId, onExtractionComplete, highli
         </div>
       )}
 
-      <div className="flex items-baseline justify-between mb-4 pb-3 rule-hairline">
+      <div className="flex items-baseline justify-between mb-4 pb-3 rule-hairline gap-4">
         <h3 className="font-display text-xl font-medium text-ink">
           Document library
         </h3>
-        <span className="text-sm font-serif-italic text-ink-3 tabular">
-          {documents.length} on file
-        </span>
+        <div className="flex items-baseline gap-4">
+          {documents.length > 0 && (
+            <a
+              href={`${API_URL}/projects/${projectId}/documents/zip`}
+              className="text-sm font-serif-italic text-accent-strong hover:underline"
+              title="Download every uploaded PDF for this project as a single zip"
+            >
+              Download all
+            </a>
+          )}
+          <span className="text-sm font-serif-italic text-ink-3 tabular">
+            {documents.length} on file
+          </span>
+        </div>
       </div>
 
       {loading && documents.length === 0 ? (
@@ -423,45 +501,71 @@ export default function DocumentUpload({ projectId, onExtractionComplete, highli
         />
       ) : (
         <ul className="divide-y divide-line">
-          {documents.map((doc) => (
-            <li
-              key={doc.id}
-              ref={(el) => { docRefs.current[doc.id] = el; }}
-              className={`py-4 flex justify-between items-center gap-4 -mx-4 px-4 transition-colors duration-700 ${
-                flashId === doc.id ? "bg-accent-tint" : "hover:bg-surface-2"
-              }`}
-            >
-              <div className="min-w-0 flex-1 flex items-baseline gap-4">
-                <span className="flex-shrink-0 eyebrow text-[0.65rem] tabular">
-                  {(doc.filename.split(".").pop() || "doc").toUpperCase().slice(0, 4)}
-                </span>
-                <div className="min-w-0">
-                  <p className="font-display text-[1.05rem] text-ink truncate leading-tight">
-                    {doc.filename}
-                  </p>
-                  <p className="text-xs text-ink-3 font-serif-italic mt-0.5">
-                    {doc.mime || "unknown type"}
-                  </p>
+          {documents.map((doc) => {
+            const inFlight = isExtractionInFlight(doc.extraction_status);
+            return (
+              <li
+                key={doc.id}
+                ref={(el) => { docRefs.current[doc.id] = el; }}
+                className={`py-4 -mx-4 px-4 transition-colors duration-700 ${
+                  flashId === doc.id ? "bg-accent-tint" : "hover:bg-surface-2"
+                }`}
+              >
+                <div className="flex justify-between items-center gap-4">
+                  <div className="min-w-0 flex-1 flex items-baseline gap-4">
+                    <span className="flex-shrink-0 eyebrow text-[0.65rem] tabular">
+                      {(doc.filename.split(".").pop() || "doc").toUpperCase().slice(0, 4)}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-display text-[1.05rem] text-ink truncate leading-tight">
+                        {doc.filename}
+                      </p>
+                      <p className="text-xs text-ink-3 font-serif-italic mt-0.5">
+                        {doc.mime || "unknown type"}
+                        {doc.extraction_model && (
+                          <>
+                            {" · "}
+                            <span title={doc.extraction_model}>
+                              {modelOptions.find((m) => m.id === doc.extraction_model)?.label || doc.extraction_model}
+                            </span>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 whitespace-nowrap">
+                    {doc.extraction_status === "complete" && (
+                      <button
+                        onClick={() => openContributions(doc)}
+                        className="text-sm font-serif-italic text-accent-strong hover:underline"
+                      >
+                        See contributions
+                      </button>
+                    )}
+                    <span
+                      title={statusTitle(doc.extraction_status)}
+                      className={`font-serif-italic text-sm ${
+                        inFlight ? "text-info" : statusClass(doc.extraction_status)
+                      }`}
+                    >
+                      {inFlight
+                        ? inFlightCaption(doc.extraction_status)
+                        : statusLabel(doc.extraction_status)}
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-4 whitespace-nowrap">
-                {doc.extraction_status === "complete" && (
-                  <button
-                    onClick={() => openContributions(doc)}
-                    className="text-sm font-serif-italic text-accent-strong hover:underline"
+                {inFlight && (
+                  <div
+                    className="section-progress-track mt-3"
+                    role="progressbar"
+                    aria-label={`${inFlightCaption(doc.extraction_status)} — ${doc.filename}`}
                   >
-                    See contributions
-                  </button>
+                    <div className="section-progress-bar" />
+                  </div>
                 )}
-                <span
-                  title={statusTitle(doc.extraction_status)}
-                  className={`font-serif-italic text-sm ${statusClass(doc.extraction_status)}`}
-                >
-                  {statusLabel(doc.extraction_status)}
-                </span>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
 
