@@ -57,8 +57,19 @@ class FatalClaudeError(RuntimeError):
     """
 
 
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 CLAUDE_INPUT_CHAR_LIMIT = int(os.getenv("CLAUDE_INPUT_CHAR_LIMIT", "20000"))
+
+# Models exposed to the dev-mode dropdown. Caller-supplied model strings
+# (from the upload form) are validated against this allowlist so a stray
+# value can't drive arbitrary spend on the user's API account. Display
+# names are short enough to fit in a select option.
+SUPPORTED_MODELS: list[dict[str, str]] = [
+    {"id": "claude-haiku-4-5-20251001", "label": "Haiku 4.5", "tier": "fast"},
+    {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6", "tier": "balanced"},
+    {"id": "claude-opus-4-7", "label": "Opus 4.7", "tier": "premium"},
+]
+SUPPORTED_MODEL_IDS: set[str] = {m["id"] for m in SUPPORTED_MODELS}
 
 
 class LeaseExtraction(BaseModel):
@@ -261,13 +272,11 @@ def _ocr_pdf_text(path: Path) -> str:
 
 def extract_pdf_text(path: Path) -> str:
     try:
+        # AcroForm field values and the empty-template detector still come
+        # from pypdf — pdfplumber does not expose form field /V values cleanly.
         from pypdf import PdfReader
 
         reader = PdfReader(str(path))
-
-        pages_text = "\n\n".join(
-            f"[PAGE {idx + 1}]\n{(page.extract_text() or '').strip()}" for idx, page in enumerate(reader.pages)
-        )
 
         fields = reader.get_fields() or {}
         filled_fields = []
@@ -279,10 +288,30 @@ def extract_pdf_text(path: Path) -> str:
                 continue
             filled_fields.append(f"{name}: {value}")
 
-        # If the PDF is an AcroForm and no field has a value, treat as unfilled template
-        # regardless of any boilerplate/instructions text in the document body.
+        # AcroForm with no filled fields → unfilled template, regardless of
+        # boilerplate/instructions in the body.
         if fields and not filled_fields:
             return "[EMPTY_FORM_TEMPLATE]"
+
+        # Body text via pdfplumber with layout=True so two-column tables
+        # (GLO cover sheets, bid forms) keep label/value alignment instead
+        # of collapsing into a column of bare labels followed (much later)
+        # by a column of values. Falls back to pypdf if pdfplumber chokes
+        # on a particular PDF — never worse than the prior path.
+        try:
+            import pdfplumber
+
+            page_chunks = []
+            with pdfplumber.open(str(path)) as pdf:
+                for idx, page in enumerate(pdf.pages):
+                    raw = page.extract_text(layout=True) or ""
+                    page_chunks.append(f"[PAGE {idx + 1}]\n{raw.strip()}")
+            pages_text = "\n\n".join(page_chunks)
+        except Exception as e:
+            _log(f"pdfplumber failed, falling back to pypdf: {e}")
+            pages_text = "\n\n".join(
+                f"[PAGE {idx + 1}]\n{(page.extract_text() or '').strip()}" for idx, page in enumerate(reader.pages)
+            )
 
         parts = []
         if filled_fields:
@@ -315,9 +344,20 @@ def extract_text(path: Path, mime: Optional[str]) -> str:
 
 
 def classify_document(filename: str, text: str) -> str:
-    name = filename.lower()
+    # Normalize underscores/hyphens to spaces so multi-word filename matches
+    # work whether the file is "Purchase_and_Sale.pdf" or "purchase-and-sale.pdf".
+    name = re.sub(r"[_\-]+", " ", filename.lower())
     head = (text or "")[:2000].lower()
     title = (text or "").lstrip().split("\n", 1)[0].lower()
+
+    # PSAs first — a "purchase and sale agreement" mentions "deed" and
+    # "assignment" inside its exhibits, which would otherwise mislead the
+    # later filename/title checks. PSAs are not recordable instruments;
+    # process_document skips them rather than producing a fake conveyance row.
+    if "purchase and sale" in name or "purchase and sale" in title:
+        return "psa"
+    if "purchase and sale agreement" in head:
+        return "psa"
 
     # 1. Filename is strongest signal
     if "assignment" in name:
@@ -343,7 +383,10 @@ def classify_document(filename: str, text: str) -> str:
     if "assignor" in head and "assignee" in head:
         return "assignment"
 
-    return "lease"
+    # Default to "unknown" so probate orders, affidavits, and miscellaneous
+    # filings don't silently flow through the lease extractor and produce
+    # nonsense rows. process_document handles "unknown" by skipping extraction.
+    return "unknown"
 
 
 def _log(msg: str) -> None:
@@ -493,11 +536,13 @@ def _call_claude_once(
     document_id: int | None = None,
     page_count: int | None = None,
     chunk_label: str | None = None,
+    model: str | None = None,
 ) -> Optional[dict]:
     client = _get_client()
     if client is None:
         _log("Claude client not configured (ANTHROPIC_API_KEY missing/placeholder)")
         return None
+    effective_model = model or CLAUDE_MODEL
     is_ocr = "DOCUMENT TEXT (OCR):" in text[:200]
     effective_prompt = prompt + (_OCR_LENIENCE_NOTE if is_ocr else "")
     warning = claude_truncation_warning(text, document_id, page_count)
@@ -507,7 +552,7 @@ def _call_claude_once(
     try:
         chunk_info = f" chunk={chunk_label}" if chunk_label else ""
         _log(
-            f"calling Claude model={CLAUDE_MODEL} base={os.getenv('ANTHROPIC_BASE_URL') or 'default'} "
+            f"calling Claude model={effective_model} base={os.getenv('ANTHROPIC_BASE_URL') or 'default'} "
             f"ocr={is_ocr}{chunk_info}"
         )
         # Prompt caching: mark the static prefix (system + extraction prompt)
@@ -516,13 +561,20 @@ def _call_claude_once(
         # text comes AFTER the breakpoint and is never cached. No-op when the
         # cached prefix is below the per-model token minimum (e.g., Haiku 4.5);
         # the call still succeeds, just without the discount.
+        # We previously used the assistant-prefill trick ({"role": "assistant",
+        # "content": "{"}) to force Claude to commit to JSON, but Claude
+        # Sonnet 4.6 and other newer models reject that with 400 "This model
+        # does not support assistant message prefill. The conversation must
+        # end with a user message." The system prompt + JSON-only instruction
+        # already produces JSON consistently, and _extract_json_from_response
+        # tolerates any leading prose, so the prefill is no longer needed.
         response = client.messages.create(
-            model=CLAUDE_MODEL,
+            model=effective_model,
             max_tokens=2000,
             system=[
                 {
                     "type": "text",
-                    "text": "You are a JSON-only extraction tool. Respond with ONLY a valid JSON object. No prose, no markdown fences, no explanations.",
+                    "text": "You are a JSON-only extraction tool. Respond with ONLY a valid JSON object. No prose, no markdown fences, no explanations. Begin your response with {.",
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
@@ -538,11 +590,9 @@ def _call_claude_once(
                         {"type": "text", "text": claude_text},
                     ],
                 },
-                {"role": "assistant", "content": "{"},
             ],
         )
-        raw = response.content[0].text
-        content = "{" + raw
+        content = response.content[0].text
         usage = getattr(response, "usage", None)
         if usage is not None:
             _log(
@@ -573,12 +623,16 @@ def _call_claude_once(
 
 
 def _call_claude(
-    prompt: str, text: str, document_id: int | None = None, page_count: int | None = None
+    prompt: str,
+    text: str,
+    document_id: int | None = None,
+    page_count: int | None = None,
+    model: str | None = None,
 ) -> Optional[dict]:
     chunks, used_page_chunking = _chunk_text_by_page(text)
     try:
         if not used_page_chunking:
-            return _call_claude_once(prompt, chunks[0], document_id=document_id, page_count=page_count)
+            return _call_claude_once(prompt, chunks[0], document_id=document_id, page_count=page_count, model=model)
 
         _log(claude_chunking_notice(text, len(chunks), document_id))
         parsed_chunks = []
@@ -589,6 +643,7 @@ def _call_claude(
                 document_id=document_id,
                 page_count=page_count,
                 chunk_label=f"{idx}/{len(chunks)}",
+                model=model,
             )
             if parsed:
                 parsed_chunks.append(parsed)
@@ -764,8 +819,13 @@ def _regex_deed_fallback(text: str) -> DeedExtraction:
     )
 
 
-def extract_lease(text: str, document_id: int | None = None, page_count: int | None = None) -> LeaseExtraction:
-    data = _call_claude(LEASE_PROMPT, text, document_id=document_id, page_count=page_count)
+def extract_lease(
+    text: str,
+    document_id: int | None = None,
+    page_count: int | None = None,
+    model: str | None = None,
+) -> LeaseExtraction:
+    data = _call_claude(LEASE_PROMPT, text, document_id=document_id, page_count=page_count, model=model)
     if data:
         lease = LeaseExtraction(**{k: v for k, v in data.items() if k in LeaseExtraction.model_fields})
     else:
@@ -773,8 +833,13 @@ def extract_lease(text: str, document_id: int | None = None, page_count: int | N
     return _sanitize_lease(lease)
 
 
-def extract_deed(text: str, document_id: int | None = None, page_count: int | None = None) -> DeedExtraction:
-    data = _call_claude(DEED_PROMPT, text, document_id=document_id, page_count=page_count)
+def extract_deed(
+    text: str,
+    document_id: int | None = None,
+    page_count: int | None = None,
+    model: str | None = None,
+) -> DeedExtraction:
+    data = _call_claude(DEED_PROMPT, text, document_id=document_id, page_count=page_count, model=model)
     if data:
         deed = DeedExtraction(**{k: v for k, v in data.items() if k in DeedExtraction.model_fields})
     else:
@@ -1020,8 +1085,13 @@ Document:
 """
 
 
-def extract_assignment(text: str, document_id: int | None = None, page_count: int | None = None) -> DeedExtraction:
-    data = _call_claude(ASSIGNMENT_PROMPT, text, document_id=document_id, page_count=page_count)
+def extract_assignment(
+    text: str,
+    document_id: int | None = None,
+    page_count: int | None = None,
+    model: str | None = None,
+) -> DeedExtraction:
+    data = _call_claude(ASSIGNMENT_PROMPT, text, document_id=document_id, page_count=page_count, model=model)
     if data:
         assignment = DeedExtraction(**{k: v for k, v in data.items() if k in DeedExtraction.model_fields})
     else:
@@ -1052,6 +1122,69 @@ def materialize_assignment(db: Session, project_id: int, document_id: int, assig
             },
         )
     )
+
+
+def _lease_consistency_checks(le: LeaseExtraction) -> List[str]:
+    """Cheap arithmetic / ordering sanity checks on a lease extraction.
+
+    Returns a list of human-readable warning strings. Empty list = no
+    issues. Each entry catches a likely extraction error before it lands
+    in the runsheet.
+    """
+    out: List[str] = []
+    if le.gross_acres and le.net_acres and le.net_acres > le.gross_acres:
+        out.append(f"net_acres ({le.net_acres}) > gross_acres ({le.gross_acres})")
+    if le.effective_date and le.recording_date:
+        try:
+            eff = datetime.strptime(le.effective_date, "%Y-%m-%d")
+            rec = datetime.strptime(le.recording_date, "%Y-%m-%d")
+            if rec < eff:
+                out.append(f"recording_date {le.recording_date} precedes effective_date {le.effective_date}")
+        except ValueError:
+            # Date parsing is lenient elsewhere — silently ignore here.
+            pass
+    if le.bonus and le.gross_acres and le.gross_acres > 0:
+        per_acre = le.bonus / le.gross_acres
+        # Plausible band for $/ac: anything outside (1, 100k) is almost certainly
+        # a unit confusion (total bonus reported as per-acre or vice versa).
+        if per_acre < 1 or per_acre > 100_000:
+            out.append(f"bonus/acre {per_acre:.2f} outside plausible range")
+    return out
+
+
+def _deed_consistency_checks(de: DeedExtraction) -> List[str]:
+    out: List[str] = []
+    if de.fraction_numerator is not None and de.fraction_denominator is not None:
+        if de.fraction_denominator == 0:
+            out.append("deed fraction denominator is 0")
+        else:
+            frac = de.fraction_numerator / de.fraction_denominator
+            if frac <= 0 or frac > 1:
+                out.append(f"deed fraction {de.fraction_numerator}/{de.fraction_denominator} outside (0, 1]")
+    return out
+
+
+def _record_consistency_warnings(
+    document: Document,
+    *,
+    lease: Optional[LeaseExtraction] = None,
+    deed: Optional[DeedExtraction] = None,
+) -> None:
+    """Run consistency checks and append findings to the doc's extraction_warning.
+
+    Preserves any pre-existing warning text (truncation/chunking notes from
+    the Claude-call layer) by joining with a semicolon separator.
+    """
+    warnings: List[str] = []
+    if lease is not None:
+        warnings.extend(_lease_consistency_checks(lease))
+    if deed is not None:
+        warnings.extend(_deed_consistency_checks(deed))
+    if not warnings:
+        return
+    existing = document.extraction_warning or ""
+    suffix = "; ".join(warnings)
+    document.extraction_warning = f"{existing}; {suffix}" if existing else suffix
 
 
 def process_document(db: Session, document: Document, file_path: Path) -> dict:
@@ -1085,19 +1218,32 @@ def process_document(db: Session, document: Document, file_path: Path) -> dict:
     document.extraction_status = "in_progress"
     db.commit()
 
+    # Per-document model override (set at upload time via the dropdown).
+    # When None, extract_* falls through to the CLAUDE_MODEL env default.
+    model = document.extraction_model
     try:
         if doc_type == "lease":
-            lease = extract_lease(text, document_id=document.id, page_count=page_count)
+            lease = extract_lease(text, document_id=document.id, page_count=page_count, model=model)
             materialize_lease(db, document.project_id, document.id, lease)
+            _record_consistency_warnings(document, lease=lease)
         elif doc_type == "deed":
-            deed = extract_deed(text, document_id=document.id, page_count=page_count)
+            deed = extract_deed(text, document_id=document.id, page_count=page_count, model=model)
             materialize_deed(db, document.project_id, document.id, deed)
+            _record_consistency_warnings(document, deed=deed)
         elif doc_type == "assignment":
-            assignment = extract_assignment(text, document_id=document.id, page_count=page_count)
+            assignment = extract_assignment(text, document_id=document.id, page_count=page_count, model=model)
             materialize_assignment(db, document.project_id, document.id, assignment)
-        else:
-            deed = extract_deed(text, document_id=document.id, page_count=page_count)
-            materialize_deed(db, document.project_id, document.id, deed)
+            _record_consistency_warnings(document, deed=assignment)
+        elif doc_type == "psa":
+            document.extraction_status = "skipped: PSA is not a recordable instrument"
+            db.commit()
+            _log(f"{file_path.name} classified as PSA — skipping (not recordable)")
+            return {"status": "skipped", "reason": "psa"}
+        elif doc_type == "unknown":
+            document.extraction_status = "skipped: document type not recognized"
+            db.commit()
+            _log(f"{file_path.name} could not be classified — skipping extraction")
+            return {"status": "skipped", "reason": "unknown_type"}
 
         document.extraction_status = "complete"
         db.commit()

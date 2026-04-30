@@ -116,7 +116,7 @@ def test_call_claude_aborts_remaining_chunks_on_fatal_error(monkeypatch):
     long_text = "\n\n".join([f"[PAGE {p}]\nOIL AND GAS LEASE clause text " + ("filler " * 4000) for p in range(1, 5)])
     chunks_called = {"count": 0}
 
-    def fake_once(prompt, text, document_id=None, page_count=None, chunk_label=None):
+    def fake_once(prompt, text, **kwargs):
         chunks_called["count"] += 1
         if chunks_called["count"] == 1:
             raise extractors.FatalClaudeError("credit balance too low")
@@ -140,7 +140,7 @@ def test_call_claude_continues_after_non_fatal_chunk_error(monkeypatch):
     long_text = "\n\n".join([f"[PAGE {p}]\nOIL AND GAS LEASE clause text " + ("filler " * 4000) for p in range(1, 4)])
     chunks_called = {"count": 0}
 
-    def fake_once(prompt, text, document_id=None, page_count=None, chunk_label=None):
+    def fake_once(prompt, text, **kwargs):
         chunks_called["count"] += 1
         if chunks_called["count"] == 1:
             return None  # transient failure, e.g. parse error
@@ -213,7 +213,7 @@ def test_claude_call_chunks_long_page_marked_text_and_merges(monkeypatch):
     monkeypatch.setattr(extractors, "CLAUDE_INPUT_CHAR_LIMIT", 140)
     calls = []
 
-    def fake_call_once(prompt, text, document_id=None, page_count=None, chunk_label=None):
+    def fake_call_once(prompt, text, document_id=None, page_count=None, chunk_label=None, **kwargs):
         calls.append(
             {
                 "prompt": prompt,
@@ -258,3 +258,270 @@ def test_claude_call_chunks_long_page_marked_text_and_merges(monkeypatch):
         "royalty": "Royalty: 1/5",
     }
     assert result["source_pages"] == {"lessor": 1, "royalty": 2}
+
+
+# ---------------------------------------------------------------------------
+# Classifier hardening: PSAs route to "psa", unknown filings to "unknown"
+# instead of silently masquerading as leases.
+# ---------------------------------------------------------------------------
+
+
+def test_classify_returns_unknown_for_unrecognized_filings():
+    # Probate orders, affidavits, court orders shouldn't get a free ride
+    # through the lease extractor.
+    assert extractors.classify_document("probate_order_2024.pdf", "") == "unknown"
+    assert extractors.classify_document("affidavit_of_heirship.pdf", "") == "unknown"
+    assert extractors.classify_document("court_order_partition.pdf", "ORDER\n\nThe court hereby...") == "unknown"
+
+
+def test_classify_returns_psa_for_purchase_and_sale():
+    # Filename match
+    assert extractors.classify_document("Crescent_Purchase_and_Sale_Agreement.pdf", "") == "psa"
+    # Title match
+    assert extractors.classify_document("ambiguous.pdf", "PURCHASE AND SALE AGREEMENT\n\nThis Agreement...") == "psa"
+    # Body match (must beat the deed/lease keyword fallthroughs)
+    body = "This Purchase and Sale Agreement is between Grantor and Grantee..."
+    assert extractors.classify_document("doc.pdf", body) == "psa"
+
+
+def test_process_document_skips_unknown_type(seed, db, tmp_path, monkeypatch):
+    # Unknown classification should produce a "skipped: ..." status with
+    # no extraction or materialization side effects.
+    monkeypatch.setattr(extractors, "_get_client", lambda: None)
+    monkeypatch.setattr(extractors, "classify_document", lambda *_a, **_k: "unknown")
+
+    path = tmp_path / "mystery_filing.txt"
+    path.write_text("This is some legal filing of indeterminate type.")
+    doc = models.Document(project_id=seed["project"].id, s3_key="mystery_filing.txt", mime="text/plain")
+    db.add(doc)
+    db.commit()
+
+    result = process_document(db, doc, path)
+    db.refresh(doc)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "unknown_type"
+    assert "skipped" in (doc.extraction_status or "")
+    assert "not recognized" in (doc.extraction_status or "")
+
+
+def test_process_document_skips_psa(seed, db, tmp_path, monkeypatch):
+    monkeypatch.setattr(extractors, "_get_client", lambda: None)
+    monkeypatch.setattr(extractors, "classify_document", lambda *_a, **_k: "psa")
+
+    path = tmp_path / "merger_psa.txt"
+    path.write_text("PURCHASE AND SALE AGREEMENT\n\nBetween Buyer and Seller...")
+    doc = models.Document(project_id=seed["project"].id, s3_key="merger_psa.txt", mime="text/plain")
+    db.add(doc)
+    db.commit()
+
+    result = process_document(db, doc, path)
+    db.refresh(doc)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "psa"
+    assert "PSA" in (doc.extraction_status or "")
+
+
+# ---------------------------------------------------------------------------
+# Consistency-check warnings — surface likely extraction errors as warnings
+# instead of letting nonsense rows reach the runsheet.
+# ---------------------------------------------------------------------------
+
+
+def test_lease_consistency_flags_recording_before_effective():
+    le = extractors.LeaseExtraction(
+        lessor="Acme",
+        effective_date="2024-06-01",
+        recording_date="2024-05-15",  # before effective — physically impossible
+    )
+    warnings = extractors._lease_consistency_checks(le)
+    assert any("recording_date" in w and "precedes" in w for w in warnings)
+
+
+def test_lease_consistency_flags_net_exceeds_gross():
+    le = extractors.LeaseExtraction(gross_acres=100.0, net_acres=120.0)
+    warnings = extractors._lease_consistency_checks(le)
+    assert any("net_acres" in w and "gross_acres" in w for w in warnings)
+
+
+def test_lease_consistency_flags_implausible_bonus_per_acre():
+    # Total bonus reported as per-acre (or vice versa) — extreme $/ac.
+    le = extractors.LeaseExtraction(bonus=0.05, gross_acres=100.0)
+    warnings = extractors._lease_consistency_checks(le)
+    assert any("bonus/acre" in w for w in warnings)
+
+
+def test_deed_consistency_flags_fraction_over_one():
+    de = extractors.DeedExtraction(fraction_numerator=3, fraction_denominator=2)
+    warnings = extractors._deed_consistency_checks(de)
+    assert any("outside (0, 1]" in w for w in warnings)
+
+
+def test_deed_consistency_flags_zero_denominator():
+    de = extractors.DeedExtraction(fraction_numerator=1, fraction_denominator=0)
+    warnings = extractors._deed_consistency_checks(de)
+    assert any("denominator is 0" in w for w in warnings)
+
+
+def test_record_consistency_warnings_appends_to_existing(seed, db):
+    # Pre-existing warning (truncation note) must be preserved when consistency
+    # checks add their own — semicolon-joined.
+    doc = models.Document(
+        project_id=seed["project"].id,
+        s3_key="example.txt",
+        mime="text/plain",
+        extraction_warning="Claude extraction input truncated (...)",
+    )
+    db.add(doc)
+    db.commit()
+
+    le = extractors.LeaseExtraction(gross_acres=100.0, net_acres=120.0)
+    extractors._record_consistency_warnings(doc, lease=le)
+    db.commit()
+    db.refresh(doc)
+
+    assert "truncated" in (doc.extraction_warning or "")
+    assert "net_acres" in (doc.extraction_warning or "")
+
+
+def test_record_consistency_warnings_noop_on_clean_extraction(seed, db):
+    doc = models.Document(project_id=seed["project"].id, s3_key="clean.txt", mime="text/plain")
+    db.add(doc)
+    db.commit()
+
+    le = extractors.LeaseExtraction(gross_acres=100.0, net_acres=80.0)
+    extractors._record_consistency_warnings(doc, lease=le)
+    db.refresh(doc)
+
+    assert doc.extraction_warning is None
+
+
+# ---------------------------------------------------------------------------
+# Per-upload model selection (dev dropdown)
+# ---------------------------------------------------------------------------
+
+
+def test_list_extraction_models_returns_allowlist(authenticated_client, seed):
+    c = authenticated_client(seed["owner"])
+    r = c.get("/api/extraction/models")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["default_model"] == extractors.CLAUDE_MODEL
+    ids = {m["id"] for m in body["models"]}
+    assert "claude-haiku-4-5-20251001" in ids
+    assert "claude-sonnet-4-6" in ids
+    assert "claude-opus-4-7" in ids
+
+
+def test_upload_persists_model_when_supplied(authenticated_client, seed, monkeypatch):
+    monkeypatch.setattr(routes, "enqueue_extraction", lambda *a, **k: "job-xyz")
+
+    c = authenticated_client(seed["editor"])
+    r = c.post(
+        f"/api/projects/{seed['project'].id}/documents?model=claude-sonnet-4-6",
+        files={"file": ("lease.txt", b"Oil and gas lease", "text/plain")},
+    )
+    assert r.status_code == 200, r.text
+    doc_id = r.json()["id"]
+
+    listing = c.get(f"/api/projects/{seed['project'].id}/documents")
+    matching = next(d for d in listing.json() if d["id"] == doc_id)
+    assert matching["extraction_model"] == "claude-sonnet-4-6"
+
+
+def test_upload_rejects_unsupported_model(authenticated_client, seed):
+    c = authenticated_client(seed["editor"])
+    r = c.post(
+        f"/api/projects/{seed['project'].id}/documents?model=gpt-4o-mini",
+        files={"file": ("lease.txt", b"Oil and gas lease", "text/plain")},
+    )
+    assert r.status_code == 400
+    assert "Unsupported extraction model" in r.json()["detail"]
+
+
+def test_upload_without_model_falls_through_to_default(authenticated_client, seed, monkeypatch):
+    """Omitted model param means extraction_model stays NULL on the doc, and
+    process_document will use the env-default at extraction time."""
+    monkeypatch.setattr(routes, "enqueue_extraction", lambda *a, **k: "job-default")
+
+    c = authenticated_client(seed["editor"])
+    r = c.post(
+        f"/api/projects/{seed['project'].id}/documents",
+        files={"file": ("lease.txt", b"Oil and gas lease", "text/plain")},
+    )
+    assert r.status_code == 200
+
+    listing = c.get(f"/api/projects/{seed['project'].id}/documents")
+    matching = next(d for d in listing.json() if d["id"] == r.json()["id"])
+    assert matching["extraction_model"] is None
+
+
+def test_call_claude_once_uses_supplied_model(monkeypatch):
+    """The model parameter must reach client.messages.create — without this
+    the dropdown is just decoration."""
+
+    captured = {}
+
+    class FakeUsage:
+        input_tokens = 1
+        output_tokens = 1
+        cache_read_input_tokens = 0
+        cache_creation_input_tokens = 0
+
+    class FakeContent:
+        text = '{"lessor": "Acme"}'
+
+    class FakeResponse:
+        content = [FakeContent()]
+        usage = FakeUsage()
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            captured["model"] = kwargs.get("model")
+            return FakeResponse()
+
+    class FakeClient:
+        messages = FakeMessages()
+
+    monkeypatch.setattr(extractors, "_get_client", lambda: FakeClient())
+
+    extractors._call_claude_once(
+        "PROMPT:\n",
+        "[PAGE 1]\nLEASE TEXT",
+        document_id=1,
+        page_count=1,
+        model="claude-sonnet-4-6",
+    )
+    assert captured["model"] == "claude-sonnet-4-6"
+
+
+def test_call_claude_once_falls_back_to_env_default_when_model_none(monkeypatch):
+    captured = {}
+
+    class FakeUsage:
+        input_tokens = 1
+        output_tokens = 1
+        cache_read_input_tokens = 0
+        cache_creation_input_tokens = 0
+
+    class FakeContent:
+        text = '{"lessor": "Acme"}'
+
+    class FakeResponse:
+        content = [FakeContent()]
+        usage = FakeUsage()
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            captured["model"] = kwargs.get("model")
+            return FakeResponse()
+
+    class FakeClient:
+        messages = FakeMessages()
+
+    monkeypatch.setattr(extractors, "_get_client", lambda: FakeClient())
+    monkeypatch.setattr(extractors, "CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+
+    extractors._call_claude_once("PROMPT:\n", "[PAGE 1]\nLEASE TEXT", model=None)
+    assert captured["model"] == "claude-haiku-4-5-20251001"

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from pathlib import Path
 import hashlib
+import re
 import uuid
 import os
 from datetime import datetime
@@ -12,6 +13,7 @@ from models import Project, Document, Tract, Party, Instrument, Interest, Obliga
 from pydantic import BaseModel
 from exports import OwnershipReportGenerator, RunsheetGenerator, TitleOpinionGenerator, StipulationsGenerator
 from facts import resolved_data, resolved_data_many
+import extractors
 from jobs import ExtractionQueueUnavailable, enqueue_extraction, perform_extraction_job, queue_status
 from str_parser import parse_legal_description, parsed_to_dict, section_grid_position
 from auth import IS_PRODUCTION, get_current_user
@@ -186,6 +188,7 @@ async def upload_document(
     project_id: int,
     file: UploadFile = File(...),
     force: bool = False,
+    model: Optional[str] = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -193,6 +196,13 @@ async def upload_document(
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Validate caller-supplied model against allowlist. Empty string maps to
+    # None ("use server default") so the frontend can clear an override.
+    if model == "":
+        model = None
+    if model is not None and model not in extractors.SUPPORTED_MODEL_IDS:
+        raise HTTPException(status_code=400, detail=f"Unsupported extraction model: {model}")
 
     raw_name = file.filename or "unnamed"
     safe_name = Path(raw_name.replace("\\", "/")).name or "unnamed"
@@ -230,6 +240,9 @@ async def upload_document(
         existing.extraction_error = None
         existing.extraction_warning = None
         existing.extraction_attempts = 0
+        # Force re-extraction can flip the model — useful for A/B-ing the
+        # same doc through Haiku vs Sonnet without re-uploading.
+        existing.extraction_model = model
         db.commit()
         db.refresh(existing)
         _enqueue_extraction_or_503(db, existing, existing_path)
@@ -259,6 +272,7 @@ async def upload_document(
         extraction_status="queued",
         extraction_error=None,
         extraction_warning=None,
+        extraction_model=model,
     )
     db.add(doc)
     db.commit()
@@ -275,6 +289,73 @@ async def upload_document(
         "extraction_status": "queued",
         "extraction_job_id": doc.extraction_job_id,
     }
+
+
+@router.get("/projects/{project_id}/documents/zip")
+def download_all_project_documents(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Stream a zip of every document in this project. Viewer access required.
+
+    Skips documents whose underlying file is missing on disk (logs a warning
+    rather than failing the whole archive). Filenames inside the zip strip the
+    upload-time UUID prefix so users get the original names back. If multiple
+    documents share an original name, later entries get a numeric suffix.
+    """
+    require_project_role(db, user, project_id, "viewer")
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    docs = db.query(Document).filter(Document.project_id == project_id).all()
+    if not docs:
+        raise HTTPException(status_code=404, detail="No documents in this project")
+
+    # Build the zip in memory. For projects with thousands of files this would
+    # want true streaming via stream_zip or an external tool — punt until the
+    # corpus shows pressure.
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    used_names: dict[str, int] = {}
+    skipped: list[str] = []
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for doc in docs:
+            file_path = UPLOAD_DIR / doc.s3_key
+            if not file_path.exists():
+                skipped.append(f"{doc.id}:{doc.s3_key}")
+                continue
+            # Strip the "<uuid>_" prefix that upload_document adds to keep
+            # filenames unique on disk; users want the original document name.
+            inner = Path(doc.s3_key).name
+            if "_" in inner:
+                inner = inner.split("_", 1)[1]
+            if inner in used_names:
+                used_names[inner] += 1
+                stem = Path(inner).stem
+                suffix = Path(inner).suffix
+                inner = f"{stem} ({used_names[inner]}){suffix}"
+            else:
+                used_names[inner] = 0
+            zf.write(file_path, arcname=inner)
+    if skipped:
+        logger.warning(
+            "documents zip: skipped missing files",
+            extra={"project_id": project_id, "missing": skipped},
+        )
+    buf.seek(0)
+
+    safe_project = (
+        re.sub(r"[^\w\-]+", "_", project.name or f"project-{project_id}").strip("_") or f"project-{project_id}"
+    )
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_project}_documents.zip"'},
+    )
 
 
 @router.get("/documents/{document_id}/file")
@@ -319,6 +400,7 @@ def get_document_extraction_status(
         "extraction_attempts": doc.extraction_attempts or 0,
         "extraction_error": doc.extraction_error,
         "extraction_warning": doc.extraction_warning,
+        "extraction_model": doc.extraction_model,
         **queue_status(doc.extraction_job_id),
     }
 
@@ -390,10 +472,22 @@ def list_documents(
             "extraction_attempts": d.extraction_attempts or 0,
             "extraction_error": d.extraction_error,
             "extraction_warning": d.extraction_warning,
+            "extraction_model": d.extraction_model,
             "created_at": d.created_at.isoformat() if d.created_at else None,
         }
         for d in docs
     ]
+
+
+@router.get("/extraction/models")
+def list_extraction_models(
+    user: User = Depends(get_current_user),
+):
+    """Return the allowlist of Claude models the dropdown can pick from."""
+    return {
+        "default_model": extractors.CLAUDE_MODEL,
+        "models": extractors.SUPPORTED_MODELS,
+    }
 
 
 @router.post("/projects/{project_id}/extract")
@@ -557,6 +651,11 @@ def get_obligations(
     now = datetime.utcnow()
 
     def priority_for(days: int) -> str:
+        # Negative days = already past the due date. Without this branch the
+        # bucketing collapsed all overdue items (years stale) into "high"
+        # because they trivially satisfy days <= 30.
+        if days < 0:
+            return "overdue"
         if days <= 30:
             return "high"
         if days <= 120:

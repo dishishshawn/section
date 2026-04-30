@@ -78,6 +78,41 @@ def _wrap_cell(text, style):
     return Paragraph(s, style)
 
 
+def _humanize_burdens(value) -> str:
+    """Render the burdens JSON column as a readable string instead of dict literals.
+
+    Routes.py stringifies the dict via ``str(i.burdens)``, so by the time we
+    see it here the value is something like ``"{'royalty_to_lessee': '1/4'}"``.
+    Try ast.literal_eval first; fall back to the raw string when it isn't a
+    Python literal.
+    """
+    import ast
+
+    if value is None or value == "" or value == "None":
+        return "—"
+
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            return value
+
+    if isinstance(parsed, dict):
+        parts: list[str] = []
+        for k, v in parsed.items():
+            label = str(k).replace("_", " ").capitalize()
+            if isinstance(v, list):
+                v_str = "; ".join(str(item) for item in v)
+            else:
+                v_str = str(v)
+            parts.append(f"{label}: {v_str}")
+        return " · ".join(parts) if parts else "—"
+    if isinstance(parsed, (list, tuple)):
+        return "; ".join(str(item) for item in parsed) if parsed else "—"
+    return str(parsed) if str(parsed) else "—"
+
+
 def _header_block(story, st, eyebrow_text, title_text, subtitle_text, project_name, jurisdiction, date_str):
     story.append(Paragraph(eyebrow_text, st["eyebrow"]))
     story.append(Paragraph(title_text, st["title"]))
@@ -199,10 +234,16 @@ def _build_appendix(story, st, tracker: _CiteTracker) -> None:
     data = [["Ref", "Document", "Verbatim excerpt"]]
     for n, (_, filename, quote) in tracker.items():
         excerpt = quote or "No excerpt on record"
-        if len(excerpt) > 160:
-            excerpt = excerpt[:157] + "…"
-        data.append([f"[{n}]", filename, excerpt])
-    story.append(_col_table(data, [0.4 * inch, 1.8 * inch, 4.2 * inch]))
+        if len(excerpt) > 280:
+            excerpt = excerpt[:277] + "…"
+        data.append(
+            [
+                _wrap_cell(f"[{n}]", st["cell"]),
+                _wrap_cell(filename, st["cell"]),
+                _wrap_cell(excerpt, st["cell"]),
+            ]
+        )
+    story.append(_col_table(data, [0.4 * inch, 1.8 * inch, 4.5 * inch]))
 
 
 # ── 1. Ownership report ──────────────────────────────────────────────────────
@@ -236,14 +277,14 @@ class OwnershipReportGenerator:
                 cite = tracker.add(o.get("source"))
                 data.append(
                     [
-                        o.get("name", "") + _r(reviewed, "name") + cite,
-                        o.get("fraction", ""),
-                        f"{o.get('percentage', 0)}%",
-                        o.get("mineral_estate", "") + _r(reviewed, "mineral_estate"),
-                        str(o.get("burdens") or "None"),
+                        _wrap_cell(o.get("name", "") + _r(reviewed, "name") + cite, st["cell"]),
+                        _wrap_cell(o.get("fraction", ""), st["cell"]),
+                        _wrap_cell(f"{o.get('percentage', 0)}%", st["cell"]),
+                        _wrap_cell(o.get("mineral_estate", "") + _r(reviewed, "mineral_estate"), st["cell"]),
+                        _wrap_cell(_humanize_burdens(o.get("burdens")), st["cell"]),
                     ]
                 )
-            story.append(_col_table(data, [2.1 * inch, 0.8 * inch, 0.6 * inch, 1.4 * inch, 1.5 * inch]))
+            story.append(_col_table(data, [1.9 * inch, 0.7 * inch, 0.6 * inch, 1.6 * inch, 1.7 * inch]))
             story.append(Spacer(1, 0.2 * inch))
 
         story.append(Paragraph("Acreage Summary", st["h2"]))
@@ -338,12 +379,12 @@ class RunsheetGenerator:
                 data.append(
                     [
                         str(i).zfill(2),
-                        gap.get("missing_document", ""),
-                        gap.get("from", ""),
-                        gap.get("to", ""),
+                        _wrap_cell(gap.get("missing_document", ""), st["cell"]),
+                        _wrap_cell(gap.get("from", ""), st["cell"]),
+                        _wrap_cell(gap.get("to", ""), st["cell"]),
                     ]
                 )
-            story.append(_col_table(data, [0.35 * inch, 2.8 * inch, 1.2 * inch, 1.2 * inch]))
+            story.append(_col_table(data, [0.35 * inch, 3.55 * inch, 1.4 * inch, 1.4 * inch]))
 
         _build_appendix(story, st, tracker)
         doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
@@ -414,13 +455,13 @@ class TitleOpinionGenerator:
                 cite = tracker.add(o.get("source"))
                 data.append(
                     [
-                        o.get("name", "") + _r(reviewed, "name") + cite,
-                        o.get("fraction", ""),
-                        f"{o.get('percentage', 0)}%",
-                        o.get("mineral_estate", "") + _r(reviewed, "mineral_estate"),
+                        _wrap_cell(o.get("name", "") + _r(reviewed, "name") + cite, st["cell"]),
+                        _wrap_cell(o.get("fraction", ""), st["cell"]),
+                        _wrap_cell(f"{o.get('percentage', 0)}%", st["cell"]),
+                        _wrap_cell(o.get("mineral_estate", "") + _r(reviewed, "mineral_estate"), st["cell"]),
                     ]
                 )
-            story.append(_col_table(data, [2.3 * inch, 0.9 * inch, 0.7 * inch, 2.1 * inch]))
+            story.append(_col_table(data, [2.4 * inch, 0.8 * inch, 0.6 * inch, 2.6 * inch]))
             story.append(Spacer(1, 0.1 * inch))
         else:
             story.append(Paragraph("No ownership interests of record.", st["body"]))
@@ -462,12 +503,12 @@ class TitleOpinionGenerator:
                 data.append(
                     [
                         str(i).zfill(2),
-                        gap.get("missing_document", ""),
-                        gap.get("from", ""),
-                        gap.get("to", ""),
+                        _wrap_cell(gap.get("missing_document", ""), st["cell"]),
+                        _wrap_cell(gap.get("from", ""), st["cell"]),
+                        _wrap_cell(gap.get("to", ""), st["cell"]),
                     ]
                 )
-            story.append(_col_table(data, [0.35 * inch, 2.8 * inch, 1.2 * inch, 1.2 * inch]))
+            story.append(_col_table(data, [0.35 * inch, 3.55 * inch, 1.4 * inch, 1.4 * inch]))
             story.append(Spacer(1, 0.2 * inch))
 
         story.append(Paragraph("VI. Certification", st["h2"]))
@@ -515,6 +556,7 @@ class StipulationsGenerator:
         obligations = obligations_data.get("obligations", [])
 
         buckets = [
+            ("Overdue", "overdue", "Past due — action required"),
             ("Immediate Attention", "high", "Within 30 days"),
             ("On the Calendar", "medium", "31–120 days"),
             ("In the Distance", "low", "More than 120 days"),

@@ -38,6 +38,7 @@ class Document(Base):
     extraction_error = Column(Text, nullable=True)
     extraction_warning = Column(Text, nullable=True)
     extraction_attempts = Column(Integer, nullable=False, default=0)
+    extraction_model = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="documents")
