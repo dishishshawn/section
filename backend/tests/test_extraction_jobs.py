@@ -470,7 +470,7 @@ def test_call_claude_once_uses_supplied_model(monkeypatch):
         cache_creation_input_tokens = 0
 
     class FakeContent:
-        text = '"lessor": "Acme"}'
+        text = '{"lessor": "Acme"}'
 
     class FakeResponse:
         content = [FakeContent()]
@@ -506,7 +506,7 @@ def test_call_claude_once_falls_back_to_env_default_when_model_none(monkeypatch)
         cache_creation_input_tokens = 0
 
     class FakeContent:
-        text = '"lessor": "Acme"}'
+        text = '{"lessor": "Acme"}'
 
     class FakeResponse:
         content = [FakeContent()]

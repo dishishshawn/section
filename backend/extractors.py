@@ -561,13 +561,20 @@ def _call_claude_once(
         # text comes AFTER the breakpoint and is never cached. No-op when the
         # cached prefix is below the per-model token minimum (e.g., Haiku 4.5);
         # the call still succeeds, just without the discount.
+        # We previously used the assistant-prefill trick ({"role": "assistant",
+        # "content": "{"}) to force Claude to commit to JSON, but Claude
+        # Sonnet 4.6 and other newer models reject that with 400 "This model
+        # does not support assistant message prefill. The conversation must
+        # end with a user message." The system prompt + JSON-only instruction
+        # already produces JSON consistently, and _extract_json_from_response
+        # tolerates any leading prose, so the prefill is no longer needed.
         response = client.messages.create(
             model=effective_model,
             max_tokens=2000,
             system=[
                 {
                     "type": "text",
-                    "text": "You are a JSON-only extraction tool. Respond with ONLY a valid JSON object. No prose, no markdown fences, no explanations.",
+                    "text": "You are a JSON-only extraction tool. Respond with ONLY a valid JSON object. No prose, no markdown fences, no explanations. Begin your response with {.",
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
@@ -583,11 +590,9 @@ def _call_claude_once(
                         {"type": "text", "text": claude_text},
                     ],
                 },
-                {"role": "assistant", "content": "{"},
             ],
         )
-        raw = response.content[0].text
-        content = "{" + raw
+        content = response.content[0].text
         usage = getattr(response, "usage", None)
         if usage is not None:
             _log(
