@@ -651,6 +651,11 @@ def get_obligations(
     now = datetime.utcnow()
 
     def priority_for(days: int) -> str:
+        # Negative days = already past the due date. Without this branch the
+        # bucketing collapsed all overdue items (years stale) into "high"
+        # because they trivially satisfy days <= 30.
+        if days < 0:
+            return "overdue"
         if days <= 30:
             return "high"
         if days <= 120:
