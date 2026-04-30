@@ -109,7 +109,55 @@ def test_document_extraction_status_includes_queue_and_qa_fields(authenticated_c
     assert body["dead_lettered"] is True
 
 
-def test_long_page_marked_extraction_input_is_chunked_without_warning(seed, db, tmp_path):
+def test_call_claude_aborts_remaining_chunks_on_fatal_error(monkeypatch):
+    """When the first chunk hits a FatalClaudeError (zero balance, bad key),
+    we must stop hammering the API instead of running every remaining chunk."""
+
+    long_text = "\n\n".join([f"[PAGE {p}]\nOIL AND GAS LEASE clause text " + ("filler " * 4000) for p in range(1, 5)])
+    chunks_called = {"count": 0}
+
+    def fake_once(prompt, text, document_id=None, page_count=None, chunk_label=None):
+        chunks_called["count"] += 1
+        if chunks_called["count"] == 1:
+            raise extractors.FatalClaudeError("credit balance too low")
+        return {"lessor": "should-never-run"}
+
+    monkeypatch.setattr(extractors, "_call_claude_once", fake_once)
+
+    try:
+        extractors._call_claude("PROMPT:\n", long_text, document_id=42, page_count=4)
+        raise AssertionError("expected FatalClaudeError to propagate")
+    except extractors.FatalClaudeError:
+        pass
+
+    assert chunks_called["count"] == 1
+
+
+def test_call_claude_continues_after_non_fatal_chunk_error(monkeypatch):
+    """A chunk-level None (transient/parse failure) must not abort siblings —
+    only FatalClaudeError does. Other chunks still get a shot."""
+
+    long_text = "\n\n".join([f"[PAGE {p}]\nOIL AND GAS LEASE clause text " + ("filler " * 4000) for p in range(1, 4)])
+    chunks_called = {"count": 0}
+
+    def fake_once(prompt, text, document_id=None, page_count=None, chunk_label=None):
+        chunks_called["count"] += 1
+        if chunks_called["count"] == 1:
+            return None  # transient failure, e.g. parse error
+        return {"lessor": "Acme"}
+
+    monkeypatch.setattr(extractors, "_call_claude_once", fake_once)
+
+    result = extractors._call_claude("PROMPT:\n", long_text, document_id=42, page_count=3)
+    assert chunks_called["count"] >= 2
+    assert result is not None
+    assert result.get("lessor") == "Acme"
+
+
+def test_long_page_marked_extraction_input_is_chunked_without_warning(seed, db, tmp_path, monkeypatch):
+    # No real Claude key in tests — force the no-client branch so extraction
+    # falls through to the regex fallback instead of hitting the network.
+    monkeypatch.setattr(extractors, "_get_client", lambda: None)
     text = "\n\n".join(
         [
             "[PAGE 1]\nOIL AND GAS LEASE\nLESSOR: Alice Mineral Owner\nLESSEE: Beta Energy LLC",
@@ -133,7 +181,8 @@ def test_long_page_marked_extraction_input_is_chunked_without_warning(seed, db, 
     assert doc.extraction_warning is None
 
 
-def test_long_unpaged_extraction_input_sets_document_warning(seed, db, tmp_path):
+def test_long_unpaged_extraction_input_sets_document_warning(seed, db, tmp_path, monkeypatch):
+    monkeypatch.setattr(extractors, "_get_client", lambda: None)
     text = "\n".join(
         [
             "OIL AND GAS LEASE",

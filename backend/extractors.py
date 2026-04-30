@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 from models import Tract, Party, Instrument, Interest, Obligation, Document
 
 try:
-    from anthropic import Anthropic
+    from anthropic import (
+        Anthropic,
+        AuthenticationError,
+        BadRequestError,
+        PermissionDeniedError,
+    )
 
     _client: Optional[Anthropic] = None
 
@@ -28,10 +33,28 @@ try:
             _client = Anthropic(**kwargs)
         return _client
 
+    # Tuple used by _call_claude_once to short-circuit on permanent errors.
+    # 401/403 always; 400 only when the message says credit balance / billing,
+    # since other 400s (oversized payload, etc.) are chunk-specific and the
+    # remaining chunks may still succeed.
+    _FATAL_AUTH_ERRORS = (AuthenticationError, PermissionDeniedError)
+
 except ImportError:
 
     def _get_client():
         return None
+
+    _FATAL_AUTH_ERRORS = ()
+    BadRequestError = Exception  # type: ignore[assignment,misc]
+
+
+class FatalClaudeError(RuntimeError):
+    """A Claude API error where retrying further chunks is pointless.
+
+    Examples: invalid API key, exhausted credit balance, blocked workspace.
+    Distinct from transient failures (rate limits, timeouts, parse errors)
+    which return None and let the caller continue with other chunks.
+    """
 
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
@@ -487,22 +510,63 @@ def _call_claude_once(
             f"calling Claude model={CLAUDE_MODEL} base={os.getenv('ANTHROPIC_BASE_URL') or 'default'} "
             f"ocr={is_ocr}{chunk_info}"
         )
+        # Prompt caching: mark the static prefix (system + extraction prompt)
+        # as ephemerally cacheable. On chunked multi-page docs and re-extractions,
+        # the prefix is read from cache at ~10% input cost. The variable doc
+        # text comes AFTER the breakpoint and is never cached. No-op when the
+        # cached prefix is below the per-model token minimum (e.g., Haiku 4.5);
+        # the call still succeeds, just without the discount.
         response = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=2000,
-            system="You are a JSON-only extraction tool. Respond with ONLY a valid JSON object. No prose, no markdown fences, no explanations.",
+            system=[
+                {
+                    "type": "text",
+                    "text": "You are a JSON-only extraction tool. Respond with ONLY a valid JSON object. No prose, no markdown fences, no explanations.",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[
-                {"role": "user", "content": effective_prompt + claude_text},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": effective_prompt,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {"type": "text", "text": claude_text},
+                    ],
+                },
                 {"role": "assistant", "content": "{"},
             ],
         )
         raw = response.content[0].text
         content = "{" + raw
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            _log(
+                f"Claude usage input={getattr(usage, 'input_tokens', None)} "
+                f"output={getattr(usage, 'output_tokens', None)} "
+                f"cache_read={getattr(usage, 'cache_read_input_tokens', None)} "
+                f"cache_create={getattr(usage, 'cache_creation_input_tokens', None)}"
+            )
         _log(f"Claude returned {len(content)} chars: {content[:120]!r}")
         parsed = _extract_json_from_response(content)
         if parsed is None:
             _log(f"JSON parse failed; full content={content[:500]!r}")
         return parsed
+    except _FATAL_AUTH_ERRORS as e:
+        _log(f"Claude auth error (fatal): {type(e).__name__}: {e}")
+        raise FatalClaudeError(f"{type(e).__name__}: {e}") from e
+    except BadRequestError as e:
+        msg = str(e).lower()
+        if "credit balance" in msg or "billing" in msg or "insufficient" in msg:
+            _log(f"Claude billing error (fatal): {e}")
+            raise FatalClaudeError(str(e)) from e
+        # Other 400s are chunk-specific (oversized, malformed). Let the caller
+        # try the next chunk.
+        _log(f"Claude bad request (chunk-level): {e}")
     except Exception as e:
         _log(f"Claude call failed: {type(e).__name__}: {e}")
     return None
@@ -512,21 +576,29 @@ def _call_claude(
     prompt: str, text: str, document_id: int | None = None, page_count: int | None = None
 ) -> Optional[dict]:
     chunks, used_page_chunking = _chunk_text_by_page(text)
-    if not used_page_chunking:
-        return _call_claude_once(prompt, chunks[0], document_id=document_id, page_count=page_count)
+    try:
+        if not used_page_chunking:
+            return _call_claude_once(prompt, chunks[0], document_id=document_id, page_count=page_count)
 
-    _log(claude_chunking_notice(text, len(chunks), document_id))
-    parsed_chunks = []
-    for idx, chunk in enumerate(chunks, start=1):
-        parsed = _call_claude_once(
-            prompt,
-            chunk,
-            document_id=document_id,
-            page_count=page_count,
-            chunk_label=f"{idx}/{len(chunks)}",
-        )
-        if parsed:
-            parsed_chunks.append(parsed)
+        _log(claude_chunking_notice(text, len(chunks), document_id))
+        parsed_chunks = []
+        for idx, chunk in enumerate(chunks, start=1):
+            parsed = _call_claude_once(
+                prompt,
+                chunk,
+                document_id=document_id,
+                page_count=page_count,
+                chunk_label=f"{idx}/{len(chunks)}",
+            )
+            if parsed:
+                parsed_chunks.append(parsed)
+    except FatalClaudeError as e:
+        # Stop hammering the API once we know further calls can't succeed
+        # (e.g., zero credit balance, invalid key). Surface this in the
+        # document's extraction_error via the caller's existing handling
+        # rather than burying the cause.
+        _log(f"aborting Claude calls for document_id={document_id}: {e}")
+        raise
 
     if not parsed_chunks:
         return None
