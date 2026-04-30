@@ -89,6 +89,7 @@ export default function ProjectShell({ me, onSignOut }: ProjectShellProps) {
     } catch (err: any) {
       console.error("Create project error:", err);
       setError(err.response?.data?.detail || err.message || "Failed to create project");
+    } finally {
       setSubmitting(false);
     }
   };
